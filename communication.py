@@ -1,34 +1,46 @@
 ##############################################################################################################################################
 # 
-# Configuration de la communication MIDI DIN pour contrôleur générique
+# Definition of communication wrappers. This is where the client specific (i.e. Kemper) implementations are linked to the framework.
 #
 ##############################################################################################################################################
 
 from pyswitch.controller.midi import MidiRouting
-from pyswitch.hardware.devices.pa_midicaptain import PA_MIDICAPTAIN_DIN_MIDI
-from config import Config
+from pyswitch.hardware.devices.pa_midicaptain import PA_MIDICAPTAIN_DIN_MIDI, PA_MIDICAPTAIN_USB_MIDI
 
-# Configuration du port MIDI DIN
+# MIDI Devices in use (optionally you can specify the in/out channels here, too)
 _DIN_MIDI = PA_MIDICAPTAIN_DIN_MIDI(
-    in_channel = Config.get("midiInChannel"),
-    out_channel = Config.get("midiOutChannel", 1) - 1  # Conversion 1-16 vers 0-15
+    in_channel = 0, # omni = None, CH1 = 0, CH2 = 1...
+    out_channel = 0
+)
+_USB_MIDI = PA_MIDICAPTAIN_USB_MIDI(
+    in_channel = 0,
+    out_channel = 0
 )
 
-# Configuration de la communication
+# Communication configuration
 Communication = {
-    # Pas de protocole bidirectionnel
-    "protocol": None,
 
-    # Configuration MIDI : routage depuis/vers l'application via DIN MIDI
     "midi": {
         "routings": [
-            # Application reçoit les messages MIDI du port DIN
+            # Application: Receive MIDI messages from USB
+            MidiRouting(
+                source = _USB_MIDI,
+                target = MidiRouting.APPLICATION
+            ),
+
+            # Application: Send MIDI messages to USB
+            MidiRouting(
+                source = MidiRouting.APPLICATION,
+                target = _USB_MIDI
+            ),
+
+            # Application: Receive MIDI messages from DIN
             MidiRouting(
                 source = _DIN_MIDI,
                 target = MidiRouting.APPLICATION
             ),
 
-            # Application envoie les messages MIDI vers le port DIN
+            # Application: Send MIDI messages to DIN
             MidiRouting(
                 source = MidiRouting.APPLICATION,
                 target = _DIN_MIDI
