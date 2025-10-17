@@ -41,7 +41,7 @@ Config = {
     # Note that not all action definitions in kemper.py or other client implementations have to regard this! See the
     # parameters of the action definitions in question.
     #"ledBrightnessOn": 0.3,
-    "ledBrightnessOff": 0,
+    "ledBrightnessOff": 0.01,
 
     ## Development Options ###################################################################################################################
 
