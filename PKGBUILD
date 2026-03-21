@@ -1,7 +1,7 @@
 # Maintainer: Victor Sosa <victorsosadev@gmail.com>
 
 pkgname=vswaybar-studio
-pkgver=1.0.0
+pkgver=1.0.1
 pkgrel=1
 pkgdesc="A visual configuration editor for Waybar — build, style and preview your bar in real time"
 arch=('any')
@@ -37,7 +37,8 @@ package() {
     install -Dm644 README.md              "$pkgdir/usr/share/doc/$pkgname/README.md"
     install -Dm644 CHANGELOG.md           "$pkgdir/usr/share/doc/$pkgname/CHANGELOG.md"
 
-    # weather script template (user copies to ~/.config/waybar/scripts/)
+    # weather scripts (bundled defaults loaded by the app when user files don't exist)
     install -Dm644 weather.py             "$pkgdir/usr/share/$pkgname/weather.py"
+    install -Dm755 weather.sh             "$pkgdir/usr/share/$pkgname/weather.sh"
     install -Dm644 weather.conf.template  "$pkgdir/usr/share/$pkgname/weather.conf.template"
 }

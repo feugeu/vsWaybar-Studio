@@ -38,10 +38,12 @@ No more editing JSON and CSS by hand. Design your Waybar with live feedback, tem
 - **Visual styles** — Bar (solid), Islands (floating zones), Modules (per-pill)
 - **Layout editor** — drag modules between Left / Center / Right zones
 - **Module config** — click any module to edit its specific settings (format, intervals, on-click actions, colors, animations…)
+- **User Commands** — add unlimited custom launcher modules: choose an icon from a Nerd Font glyph picker, set a color and an on-click command; they appear in the bar as clickable icons
 - **Styling** — edit all 14 CSS color tokens, font, opacity, border-radius, padding
 - **Templates** — 54 ready-made themes across 36 color palettes and 3 visual styles; apply with one click
 - **Palette tools** — load from image via [matugen](https://github.com/InioX/matugen), or generate a random palette
 - **Scripts editor** — edit `weather.py` and other custom scripts in-place
+- **Automatic backups** — every apply creates a timestamped backup of your config, CSS and scripts
 - **Dark / Light editor theme** toggle
 - Apply writes `config` + `style.css` to disk and restarts Waybar automatically
 
@@ -83,6 +85,125 @@ chmod +x vswaybar-studio
 
 The editor reads `~/.config/waybar/config` and `~/.config/waybar/style.css` on startup.
 **Apply** writes both files back and restarts Waybar.
+
+---
+
+## Setting up the Weather module
+
+The weather module uses `weather.py` — a script that queries the [OpenWeatherMap API](https://openweathermap.org/api).
+A free API key is required (no credit card needed).
+
+### Step 1 — Get a free API key
+
+1. Go to [openweathermap.org](https://openweathermap.org) and create a free account
+2. Go to **API Keys** in your profile → copy your key
+3. The free tier includes current weather data (more than enough)
+
+### Step 2 — Configure the script
+
+Open vsWaybar Studio → **Modules** tab → select **Weather** from the list.
+
+Fill in:
+- **API Key** — paste your OpenWeatherMap key
+- **City** — your city name (e.g. `Monterrey`, `New York`, `Madrid`)
+- **Units** — `metric` (°C) or `imperial` (°F)
+
+Click **Save weather.conf**. This writes `~/.config/waybar/weather.conf` with your settings.
+The API key is stored only in that file — it is never included in the script itself.
+
+### Step 3 — Save the script
+
+Go to the **Scripts** tab → select **Weather fetcher** → click **Save script**.
+
+This writes `weather.py` to `~/.config/waybar/scripts/weather.py` with execute permissions.
+
+### Step 4 — Apply
+
+Click **Apply** in the header. Waybar will restart and the weather module will appear in the bar.
+
+> **Note:** The script interval defaults to 3600 seconds (1 hour). On first run it may take a moment to fetch.
+> If you see no weather data, verify your API key is valid and your city name is spelled correctly.
+
+---
+
+## Setting up the Updates module
+
+The updates module (`custom/updates`) shows the number of pending system updates using `checkupdates` from [pacman-contrib](https://gitlab.archlinux.org/pacman/pacman-contrib).
+
+### Step 1 — Install pacman-contrib
+
+```bash
+sudo pacman -S pacman-contrib
+```
+
+### Step 2 — Install a terminal emulator
+
+The updates module opens a terminal to run the actual update. By default it uses [Kitty](https://github.com/kovidgoyal/kitty):
+
+```bash
+sudo pacman -S kitty
+```
+
+If you prefer a different terminal, go to **Modules** → **Updates** and change the **On click** command.
+
+### Step 3 — Configure the module (optional)
+
+Go to **Modules** tab → select **Updates** from the list.
+
+You can change:
+- **On click** — the command that runs when you click the module (e.g. open a terminal with `yay` or `flatpak update`)
+- **Interval** — how often to check for updates (default: 3600 seconds)
+
+### Step 4 — Apply
+
+Click **Apply**. The updates count will appear in the right side of the bar.
+
+> **Note:** `checkupdates` checks only `pacman` packages. For AUR packages, edit the script in the **Scripts** tab to also run `yay -Qua` or similar.
+
+---
+
+## Adding User Commands
+
+User Commands are custom launcher modules — a clickable icon in the bar that runs a command when clicked.
+
+### Step 1 — Open the Modules tab
+
+Go to **Modules** → scroll down to the **User Commands** section → click **+ Add**.
+
+Enter a short name (letters and hyphens only, e.g. `spotify`, `terminal`, `files`). The module key will be `custom/<name>`.
+
+### Step 2 — Configure the module
+
+- **Icon** — click **Choose icon…** to pick a glyph from the Nerd Font library (~96 icons)
+- **Color** — pick a color using the color button or type a hex value
+- **On click** — the command to run (e.g. `spotify`, `kitty`, `nautilus`)
+- **Tooltip text** — optional hover label
+
+### Step 3 — Add it to the bar
+
+Go to the **Layout** tab → drag `custom/<name>` into the Left, Center or Right zone.
+
+### Step 4 — Apply
+
+Click **Apply**. The icon appears in the bar and clicking it runs your command.
+
+> To remove a User Command: Modules tab → select it → click **− Remove**. It is removed from the bar and all zones immediately.
+
+---
+
+## Backups
+
+Every save operation (Apply, Save as…, Save script, Save script as…) automatically backs up your current files to:
+
+```
+~/.config/waybar/backups/
+  20260321_143022_config
+  20260321_143022_style.css
+  20260321_143022_weather.py
+  ...
+```
+
+Backups are timestamped — you can always roll back by copying a backup file over the original.
 
 ---
 

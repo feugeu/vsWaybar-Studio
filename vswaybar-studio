@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """vsWaybar Studio — graphical config editor for Waybar"""
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 import gi
 gi.require_version('Gtk', '3.0')
@@ -28,7 +28,7 @@ DEFAULTS = {
     "margin-bottom": 0,
     "margin-left":   0,
     "margin-right":  0,
-    "font-family":   "Product Sans",
+    "font-family":   "JetBrainsMono Nerd Font",
     "font-size":     14,
     "bar-style":     "bar",
     "opacity":       100,
@@ -39,7 +39,7 @@ DEFAULTS = {
     "modules-left":   ["custom/arch", "hyprland/workspaces", "hyprland/window"],
     "modules-center": ["custom/weather", "clock"],
     "modules-right":  ["tray", "custom/updates", "pulseaudio", "network",
-                       "memory", "cpu", "battery", "custom/swaync", "custom/power"],
+                       "memory", "cpu", "battery", "custom/swaync", "custom/power", "custom/settings"],
     "custom/arch": {
         "format":          "<span font='JetBrainsMono Nerd Font Mono 20' color='#ffffff'>󰣇</span>",
         "on-click":        "$HOME/.local/bin/vsfetch",
@@ -116,6 +116,11 @@ DEFAULTS = {
     "custom/power": {
         "format": "⏻",
         "on-click": "wlogout -b 3 -c 20 -r 20 -L 400 -R 400 -T 200 -B 200 --protocol layer-shell",
+        "tooltip": False,
+    },
+    "custom/settings": {
+        "format": "󰒓",
+        "on-click": "vswaybar-studio",
         "tooltip": False,
     },
     "custom/weather": {
@@ -576,21 +581,197 @@ _TEMPLATES = [
 ]
 
 CSS_COLOR_DEFAULTS = {
-    "base":     "#11140e",
-    "mantle":   "#43483e",
-    "crust":    "#11140e",
-    "surface0": "#1d211a",
-    "surface1": "#282b24",
-    "overlay0": "#33362f",
-    "text":     "#e1e4d9",
-    "subtext0": "#c4c8bb",
-    "blue":     "#abd290",
-    "mauve":    "#abd290",
-    "red":      "#ffb4ab",
-    "green":    "#a0cfcf",
-    "yellow":   "#3e4a35",
-    "peach":    "#1e4e4e",
+    "base":     "#1e1e2e",
+    "mantle":   "#181825",
+    "crust":    "#11111b",
+    "surface0": "#313244",
+    "surface1": "#45475a",
+    "overlay0": "#6c7086",
+    "text":     "#cdd6f4",
+    "subtext0": "#a6adc8",
+    "blue":     "#89b4fa",
+    "mauve":    "#cba6f7",
+    "red":      "#f38ba8",
+    "green":    "#a6e3a1",
+    "yellow":   "#f9e2af",
+    "peach":    "#fab387",
 }
+
+_BASE_CSS = """\
+@define-color base     #1e1e2e;
+@define-color mantle   #181825;
+@define-color crust    #11111b;
+@define-color surface0 #313244;
+@define-color surface1 #45475a;
+@define-color overlay0 #6c7086;
+@define-color text     #cdd6f4;
+@define-color subtext0 #a6adc8;
+@define-color blue     #89b4fa;
+@define-color mauve    #cba6f7;
+@define-color red      #f38ba8;
+@define-color green    #a6e3a1;
+@define-color yellow   #f9e2af;
+@define-color peach    #fab387;
+
+* {
+    font-family: "JetBrainsMono Nerd Font", monospace;
+    font-size: 14px;
+}
+
+window#waybar {
+    background: rgba(17,20,14,1.00);
+    border-radius: 0px;
+    border: none;
+    color: @text;
+}
+
+.modules-left,
+.modules-center,
+.modules-right {
+    background: transparent;
+    border-radius: 0;
+    padding: 2px 8px;
+    border: none;
+    min-height: 0;
+}
+
+/* Arch icon */
+#custom-arch {
+    color: @blue;
+    padding: 0 10px 0 15px;
+}
+
+/* Workspaces */
+#workspaces {
+    background: transparent;
+}
+
+#workspaces button {
+    border-radius: 5px;
+    padding: 0px 4px;
+    min-width: 35px;
+    background: transparent;
+    color: @subtext0;
+    border: none;
+}
+
+#workspaces button:hover {
+    background: @surface0;
+    color: @text;
+}
+
+#workspaces button.active {
+    background: @blue;
+    color: @base;
+    animation: ws-active 3.0s ease infinite;
+}
+
+#workspaces button.urgent {
+    background: @red;
+    color: @base;
+}
+
+@keyframes ws-active {
+    0%  { background-color: #abd290; }
+    50% { background-color: #abd290; }
+    100%{ background-color: #abd290; }
+}
+
+/* Window title */
+#window {
+    color: @subtext0;
+    font-style: italic;
+}
+
+/* Clock */
+#clock {
+    color: @blue;
+    font-weight: bold;
+}
+
+/* System modules */
+#cpu {
+    color: @blue;
+}
+
+#memory {
+    color: @mauve;
+}
+
+#battery {
+    color: @green;
+}
+
+#battery.warning {
+    color: @yellow;
+}
+
+#battery.critical {
+    color: @red;
+}
+
+#battery.charging {
+    color: @green;
+}
+
+#network {
+    color: @blue;
+}
+
+#network.disconnected {
+    color: @red;
+}
+
+#pulseaudio {
+    color: @mauve;
+}
+
+#pulseaudio.muted {
+    color: @overlay0;
+}
+
+/* Tray */
+#tray {
+    color: @text;
+}
+
+/* Custom modules */
+#custom-weather {
+    color: @peach;
+}
+
+#custom-updates {
+    color: @subtext0;
+}
+
+#custom-updates.pending {
+    color: @yellow;
+}
+
+#custom-swaync {
+    color: @text;
+}
+
+#custom-power {
+    color: @red;
+}
+
+#custom-settings {
+    color: @subtext0;
+}
+
+/* Tooltip */
+tooltip {
+    background: @surface0;
+    border: 1px solid @overlay0;
+    border-radius: 8px;
+    color: @text;
+}
+
+tooltip label {
+    color: @text;
+}
+"""
 
 ALL_MODULES = [
     # Hyprland
@@ -603,7 +784,7 @@ ALL_MODULES = [
     "mpris", "privacy", "tray", "wlr/taskbar",
     # Custom
     "custom/arch", "custom/weather", "custom/updates",
-    "custom/swaync", "custom/power",
+    "custom/swaync", "custom/power", "custom/settings",
 ]
 
 MOD_SAMPLE = {
@@ -631,6 +812,7 @@ MOD_SAMPLE = {
     "custom/updates":      "󰚰 5",
     "custom/swaync":       "󰂚",
     "custom/power":        "⏻",
+    "custom/settings":     "󰒓",
 }
 
 MODULE_LABELS = {
@@ -658,7 +840,47 @@ MODULE_LABELS = {
     "custom/updates":      ("󰚰", "Updates"),
     "custom/swaync":       ("󰂚", "Notifs"),
     "custom/power":        ("⏻", "Power"),
+    "custom/settings":     ("󰒓", "Config"),
 }
+
+_RESERVED_CUSTOM = frozenset({
+    "arch", "weather", "updates", "swaync", "power", "settings"
+})
+
+_USER_GLYPHS = [
+    # System
+    ("󰍛", "CPU"),      ("󰾆", "RAM"),       ("󰋊", "Disk"),     ("", "Temp"),
+    ("󰏖", "Package"),  ("󰣇", "Arch"),       ("󰕈", "Terminal"), ("󰒓", "Settings"),
+    ("󰣱", "Home"),     ("󰺙", "Folder"),     ("󰗿", "Key"),      ("󰐾", "Lock"),
+    ("󰄑", "Task"),     ("󰉁", "Script"),     ("󰑋", "Process"),  ("󰓆", "Timer"),
+    # Network
+    ("󰖩", "WiFi"),     ("󰈀", "Ethernet"),  ("󰌺", "VPN"),      ("󰒃", "Router"),
+    ("󰛳", "Globe"),    ("", "Server"),    ("󰿘", "Down"),     ("󰿙", "Up"),
+    ("󰖔", "Signal"),   ("󰀌", "SSH"),       ("󰩟", "IP"),       ("󰱓", "DNS"),
+    # Media
+    ("󰎇", "Music"),    ("󰝚", "Play"),      ("󰝛", "Pause"),    ("󰐊", "Volume"),
+    ("󰕿", "Vol-lo"),   ("󰖁", "Mute"),      ("󰍮", "Mic"),      ("󰑮", "Headset"),
+    ("󰎈", "Note"),     ("󰊗", "Spotify"),   ("󰸪", "Radio"),    ("󰕧", "Cast"),
+    # Power / battery
+    ("󰁹", "Battery"),  ("󰂄", "Charging"),  ("󰂃", "Low bat"),  ("󰌁", "UPS"),
+    ("󰐥", "Sleep"),    ("󰍃", "Logout"),    ("󰅙", "Shutdown"), ("󰔐", "Hibernate"),
+    # Status / alerts
+    ("󰂚", "Bell"),     ("󰂛", "Silent"),    ("󰋽", "Info"),     ("󱓻", "Warning"),
+    ("󰄰", "Check"),    ("󰅙", "Error"),     ("󰑓", "Sync"),     ("󰜃", "Refresh"),
+    ("󰆳", "Bug"),      ("󰠠", "Shield"),    ("󱡓", "Security"), ("󰒘", "Private"),
+    # Cloud / dev
+    ("󰅟", "Cloud"),    ("󱃾", "Docker"),    ("󰡨", "VM"),       ("󰊢", "Git"),
+    ("󰈹", "Browser"),  ("󰘳", "Search"),    ("󰙨", "Test"),     ("󰓹", "Star"),
+    # Files / data
+    ("󰈸", "Upload"),   ("󰈶", "Download"),  ("󰆴", "Trash"),    ("󰋽", "Docs"),
+    ("󰃰", "Calendar"), ("󰅸", "Clock"),     ("󰋹", "Archive"),  ("󰈔", "File"),
+    # Environment
+    ("󰔺", "Fan"),      ("󰌵", "Light"),     ("", "Camera"),  ("󰋸", "Sensor"),
+    ("󰮯", "Dot"),      ("", "Flag"),    ("󰏘", "Palette"),  ("󰐀", "Circle"),
+    # Fun / misc
+    ("󰊖", "Game"),     ("󰖃", "Robot"),     ("󰫔", "Tag"),      ("󰙳", "Emoji"),
+    ("󰘦", "Plug"),     ("󰙌", "Gift"),      ("󱂄", "Idea"),     ("󰋒", "Bookmark"),
+]
 
 MODULE_DEFAULTS = {
     "clock": {
@@ -756,6 +978,11 @@ MODULE_DEFAULTS = {
     "custom/power": {
         "format":   "⏻",
         "on-click": "wlogout -b 3 -c 20 -r 20 -L 400 -R 400 -T 200 -B 200 --protocol layer-shell",
+        "tooltip":  False,
+    },
+    "custom/settings": {
+        "format":   "󰒓",
+        "on-click": "vswaybar-studio",
         "tooltip":  False,
     },
     "bluetooth": {
@@ -1042,7 +1269,7 @@ _DEFAULT_LAYOUT = {
     "modules-left":   ["custom/arch", "hyprland/workspaces", "hyprland/window"],
     "modules-center": ["custom/weather", "clock"],
     "modules-right":  ["tray", "custom/updates", "pulseaudio", "network",
-                       "memory", "cpu", "custom/swaync", "custom/power"],
+                       "memory", "cpu", "custom/swaync", "custom/power", "custom/settings"],
 }
 
 _MATUGEN_MAP = {
@@ -1220,6 +1447,7 @@ class VsWaybarSettings(Gtk.Window):
         self._module_panel    = None
         self._bar_preview_da  = None
         self._ws_anim_t       = 0.0
+        self._waybar_proc     = None   # process we launched; only kill this one
 
         Gtk.StyleContext.add_provider_for_screen(
             Gdk.Screen.get_default(),
@@ -1260,6 +1488,7 @@ class VsWaybarSettings(Gtk.Window):
 
     def _load_config(self):
         self._cfg = copy.deepcopy(DEFAULTS)
+        self._cfg["_user_modules"] = []
         try:
             with open(self._config_path) as f:
                 user = json.load(f)
@@ -1276,6 +1505,14 @@ class VsWaybarSettings(Gtk.Window):
                     base = copy.deepcopy(DEFAULTS.get(mod, {}))
                     base.update(user[mod])
                     self._cfg[mod] = base
+            # detect user-defined custom modules (any custom/X not in reserved set)
+            for k, v in user.items():
+                if k.startswith("custom/") and isinstance(v, dict):
+                    suffix = k[7:]
+                    if suffix not in _RESERVED_CUSTOM:
+                        self._cfg[k] = copy.deepcopy(v)
+                        if suffix not in self._cfg["_user_modules"]:
+                            self._cfg["_user_modules"].append(suffix)
             # strip deprecated/removed keys
             self._cfg.get("clock", {}).pop("format-alt", None)
         except FileNotFoundError:
@@ -1364,6 +1601,55 @@ class VsWaybarSettings(Gtk.Window):
                 css_text, re.DOTALL
             )
             ws_c.setdefault("button-minw", int(kmw.group(1)) if kmw else 32)
+
+            # bar-style detection:
+            # "bar"     → window#waybar has opaque rgba background
+            # "islands" → window transparent, .modules-* have rgba background
+            # "modules" → both transparent
+            win_bg = re.search(
+                r'window#waybar\s*\{[^}]*background(?:-color)?:\s*([^;]+);',
+                css_text, re.DOTALL)
+            mod_bg = re.search(
+                r'\.modules-left[^{]*\{[^}]*background(?:-color)?:\s*([^;]+);',
+                css_text, re.DOTALL)
+            def _is_opaque(val):
+                val = val.strip()
+                if val == "transparent": return False
+                m = re.search(r'rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)', val)
+                return bool(m and float(m.group(1)) > 0.01)
+            if win_bg and _is_opaque(win_bg.group(1)):
+                self._cfg["bar-style"] = "bar"
+            elif mod_bg and _is_opaque(mod_bg.group(1)):
+                self._cfg["bar-style"] = "islands"
+            else:
+                self._cfg["bar-style"] = "modules"
+
+            # zone-radius from .modules-* border-radius
+            kzr = re.search(
+                r'\.modules-left[^{]*\{[^}]*border-radius:\s*(\d+)px',
+                css_text, re.DOTALL)
+            if kzr:
+                self._cfg["zone-radius"] = int(kzr.group(1))
+
+            # border-width: bar style stores it in window#waybar,
+            # islands/modules store it in .modules-left (or its children)
+            kbw = (
+                re.search(r'window#waybar\s*\{[^}]*border:\s*(\d+)px', css_text, re.DOTALL) or
+                re.search(r'\.modules-left[^{]*\{[^}]*border:\s*(\d+)px', css_text, re.DOTALL) or
+                re.search(r'\.modules-left[^{]*>[^{]*\*[^{]*\{[^}]*border:\s*(\d+)px', css_text, re.DOTALL)
+            )
+            if kbw:
+                self._cfg["border-width"] = int(kbw.group(1))
+
+            # user module colors from #custom-<suffix> { color: #rrggbb; }
+            for suffix in self._cfg.get("_user_modules", []):
+                kuc = re.search(
+                    rf'#custom-{re.escape(suffix)}\s*\{{[^}}]*color:\s*(#[0-9a-fA-F]{{6}})',
+                    css_text, re.DOTALL | re.IGNORECASE
+                )
+                if kuc:
+                    self._cfg.setdefault(f"custom/{suffix}", {})["_color"] = kuc.group(1).lower()
+
         except FileNotFoundError:
             pass
         except Exception as e:
@@ -1434,6 +1720,15 @@ class VsWaybarSettings(Gtk.Window):
         if mod == "clock":
             self._cfg[mod].pop("format-alt", None)
 
+        # collect color for user modules
+        suffix = mod[7:] if mod.startswith("custom/") else ""
+        if suffix and suffix not in _RESERVED_CUSTOM:
+            col_entry = self._w.get("mod_fields", {}).get("_color_hex")
+            if col_entry and isinstance(col_entry, Gtk.Entry):
+                val = col_entry.get_text().strip()
+                if re.match(r'^#[0-9a-fA-F]{6}$', val, re.IGNORECASE):
+                    self._cfg[mod]["_color"] = val.lower()
+
         # rebuild custom/arch format from size + color + glyph controls
         if mod == "custom/arch":
             sz_w    = fields.get("arch-icon-size")
@@ -1468,6 +1763,20 @@ class VsWaybarSettings(Gtk.Window):
                         if _k in mod_cfg and str(mod_cfg[_k]).strip() == "":
                             mod_cfg.pop(_k)
                 out[mod] = mod_cfg
+        # user-defined custom modules (launcher style — only relevant keys)
+        for suffix in self._cfg.get("_user_modules", []):
+            key = f"custom/{suffix}"
+            if key in self._cfg:
+                mc = self._cfg[key]
+                entry = {"format": mc.get("format", "󰘳"), "tooltip": False}
+                oc = mc.get("on-click", "").strip()
+                if oc:
+                    entry["on-click"] = oc
+                tt = mc.get("tooltip-format", "").strip()
+                if tt:
+                    entry["tooltip-format"] = tt
+                    entry["tooltip"] = True
+                out[key] = entry
         return out
 
     def _build_save_css(self) -> str:
@@ -1476,11 +1785,18 @@ class VsWaybarSettings(Gtk.Window):
                 css_text = f.read()
         except FileNotFoundError:
             css_text = ""
+        _required = ("window#waybar", ".modules-left", "@keyframes ws-active", "#workspaces button")
+        if not css_text.strip() or not all(m in css_text for m in _required):
+            css_text = _BASE_CSS
 
         # ── @define-color replacements ────────────────────────────────────────
         for name, val in self._css_colors.items():
             pattern = rf'(@define-color\s+{re.escape(name)}\s+)(#[0-9a-fA-F]{{6}})'
-            css_text = re.sub(pattern, rf'\g<1>{val}', css_text)
+            if re.search(pattern, css_text):
+                css_text = re.sub(pattern, rf'\g<1>{val}', css_text)
+            else:
+                # token missing from CSS — inject it at the top
+                css_text = f"@define-color {name} {val};\n" + css_text
 
         # ── derived values ────────────────────────────────────────────────────
         base_hex  = self._css_colors.get("base",     "#11140e").lstrip("#")
@@ -1585,6 +1901,9 @@ class VsWaybarSettings(Gtk.Window):
                 "}"
             )
 
+        right_pad = mod_pad + 10
+        modules_block += f"\n\n.modules-right {{\n    padding-right: {right_pad}px;\n}}"
+
         css_text = re.sub(
             r'\.modules-left,\s*\n\.modules-center,\s*\n\.modules-right\s*\{[^}]+\}'
             r'(?:\s*\n\n\.modules-left\s*>\s*\*,[\s\S]*?\})?',
@@ -1600,13 +1919,22 @@ class VsWaybarSettings(Gtk.Window):
         css_text += (
             f"\n/* vswaybar:modpad */\n"
             f"#clock, #cpu, #memory, #network, #pulseaudio, #battery, #tray,\n"
-            f"#custom-updates, #custom-weather, #custom-swaync, #custom-power {{\n"
+            f"#custom-updates, #custom-weather, #custom-swaync, #custom-power, #custom-settings {{\n"
             f"    padding: 0 {mod_pad}px;\n"
             f"}}\n"
             f"#custom-arch {{\n"
             f"    padding: 0 {arch_pr}px 0 {arch_pl}px;\n"
             f"}}\n"
         )
+        # user modules: one block each with padding + color (avoids multi-selector collision)
+        for suffix in self._cfg.get("_user_modules", []):
+            color = self._cfg.get(f"custom/{suffix}", {}).get("_color", "#a6adc8")
+            css_text += (
+                f"#custom-{suffix} {{\n"
+                f"    padding: 0 {mod_pad}px;\n"
+                f"    color: {color};\n"
+                f"}}\n"
+            )
 
         # ── separators (islas / barra only) ──────────────────────────────────
         separators = self._cfg.get("separators", False)
@@ -1624,6 +1952,18 @@ class VsWaybarSettings(Gtk.Window):
                 f"    border-right: none;\n"
                 f"}}\n"
             )
+
+        # ── enforce module color assignments (clock=@blue, weather=@peach) ────
+        css_text = re.sub(
+            r'(#clock\s*\{[^}]*?color:\s*)[^;]+;',
+            r'\g<1>@blue;',
+            css_text, flags=re.DOTALL
+        )
+        css_text = re.sub(
+            r'(#custom-weather\s*\{[^}]*?color:\s*)[^;]+;',
+            r'\g<1>@peach;',
+            css_text, flags=re.DOTALL
+        )
 
         # ── workspace animation colors ───────────────────────────────────────
         ws_c = self._cfg.get("hyprland/workspaces", {})
@@ -1680,6 +2020,7 @@ class VsWaybarSettings(Gtk.Window):
             dlg.destroy()
             self._collect()
             try:
+                self._backup_configs()
                 cfg_out = self._build_save_config()
                 css_out = self._build_save_css()
                 with open(dest, "w") as f:
@@ -1713,10 +2054,31 @@ class VsWaybarSettings(Gtk.Window):
             dlg.destroy()
 
 
+    def _backup_configs(self):
+        """Backup current config/css/scripts with a timestamp prefix."""
+        import shutil
+        ts = __import__("datetime").datetime.now().strftime("%Y%m%d_%H%M%S")
+        bk_dir = os.path.join(os.path.dirname(self._config_path), "backups")
+        os.makedirs(bk_dir, exist_ok=True)
+        for src in (self._config_path, self._css_path):
+            if os.path.isfile(src):
+                dst = os.path.join(bk_dir, f"{ts}_{os.path.basename(src)}")
+                shutil.copy2(src, dst)
+        scripts_dir = os.path.join(os.path.dirname(self._config_path), "scripts")
+        if os.path.isdir(scripts_dir):
+            for fn in os.listdir(scripts_dir):
+                src = os.path.join(scripts_dir, fn)
+                if os.path.isfile(src):
+                    dst = os.path.join(bk_dir, f"{ts}_{fn}")
+                    shutil.copy2(src, dst)
+
     def _on_preview(self, *_):
         """Write config + CSS to disk, then restart waybar."""
         self._collect()
         try:
+            os.makedirs(os.path.dirname(self._config_path), exist_ok=True)
+            os.makedirs(os.path.dirname(self._css_path),    exist_ok=True)
+            self._backup_configs()
             cfg_out = self._build_save_config()
             css_out = self._build_save_css()   # read CSS BEFORE opening for write
             with open(self._config_path, "w") as f:
@@ -1727,14 +2089,17 @@ class VsWaybarSettings(Gtk.Window):
             self._err(f"No se pudo escribir config:\n{e}")
             return
 
-        # Full restart — more reliable than SIGUSR2 for CSS changes
-        subprocess.Popen(["pkill", "-x", "waybar"])
-        GLib.timeout_add(600, self._relaunch_waybar)
+        # Kill all waybars (Hyprland uses exec-once so it won't restart)
+        if self._waybar_proc and self._waybar_proc.poll() is None:
+            self._waybar_proc.terminate()
+        subprocess.run(["pkill", "-x", "waybar"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        GLib.timeout_add(500, self._relaunch_waybar)
         self._status("↺  Reiniciando waybar…")
 
     def _relaunch_waybar(self):
         try:
-            subprocess.Popen(
+            self._waybar_proc = subprocess.Popen(
                 ["waybar", "-c", self._config_path, "-s", self._css_path],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
@@ -2063,13 +2428,18 @@ class VsWaybarSettings(Gtk.Window):
         text_c   = _col("text",     "#e1e4d9")
         MOD_COLOR = {
             "custom/arch": blue, "hyprland/workspaces": sub0,
-            "hyprland/window": sub0, "custom/weather": text_c,
+            "hyprland/window": sub0, "custom/weather": peach,
             "clock": blue, "tray": sub0,
             "custom/updates": green, "pulseaudio": blue,
             "network": green, "memory": mauve,
             "cpu": peach, "battery": green,
             "custom/swaync": text_c, "custom/power": red_c,
+            "custom/settings": sub0,
         }
+        # add user command modules with their stored color
+        for _suf in self._cfg.get("_user_modules", []):
+            _hex = self._cfg.get(f"custom/{_suf}", {}).get("_color", "")
+            MOD_COLOR[f"custom/{_suf}"] = _hex_to_rgb(_hex) if _hex else sub0
 
         bar_style = self._cfg.get("bar-style",   "islands")
         zone_r    = self._cfg.get("zone-radius",  12)
@@ -2098,7 +2468,7 @@ class VsWaybarSettings(Gtk.Window):
             fd = Pango.FontDescription.from_string(ff)
             fd.set_absolute_size(max(6, font_sz) * Pango.SCALE)
             lo.set_font_description(fd)
-            s = (self._cfg.get("custom/arch", {}).get("arch-icon-glyph", "󰣇") if mod == "custom/arch" else MOD_SAMPLE.get(mod))
+            s = (self._cfg.get("custom/arch", {}).get("arch-icon-glyph", "󰣇") if mod == "custom/arch" else (MOD_SAMPLE.get(mod) or self._cfg.get(mod, {}).get("format") if mod.startswith("custom/") else MOD_SAMPLE.get(mod)))
             if s is None:
                 icon, name = MODULE_LABELS.get(mod, ("", mod.split("/")[-1]))
                 s = f"{icon} {name}" if icon else name
@@ -2144,14 +2514,15 @@ class VsWaybarSettings(Gtk.Window):
         mx = zx + mod_pad
         for mod in mods:
             mw  = _mod_w(mod)
-            col = MOD_COLOR.get(mod, sub0) if mod != self._selected_module else blue
+            _is_user = mod.startswith("custom/") and mod[7:] not in _RESERVED_CUSTOM
+            col = MOD_COLOR.get(mod, sub0) if (mod != self._selected_module or _is_user) else blue
             lo  = PangoCairo.create_layout(cr)
             fd  = Pango.FontDescription.from_string(
                       ff + (" Bold" if mod == "clock" else
                             " Italic" if mod == "hyprland/window" else ""))
             fd.set_absolute_size((_arch_icon_sz if mod == "custom/arch" else font_sz) * Pango.SCALE)
             lo.set_font_description(fd)
-            s = (self._cfg.get("custom/arch", {}).get("arch-icon-glyph", "󰣇") if mod == "custom/arch" else MOD_SAMPLE.get(mod))
+            s = (self._cfg.get("custom/arch", {}).get("arch-icon-glyph", "󰣇") if mod == "custom/arch" else (MOD_SAMPLE.get(mod) or self._cfg.get(mod, {}).get("format") if mod.startswith("custom/") else MOD_SAMPLE.get(mod)))
             if s is None:
                 icon, name = MODULE_LABELS.get(mod, ("", mod.split("/")[-1]))
                 s = f"{icon} {name}" if icon else name
@@ -2204,13 +2575,17 @@ class VsWaybarSettings(Gtk.Window):
 
         MOD_COLOR = {
             "custom/arch":         blue,   "hyprland/workspaces": sub0,
-            "hyprland/window":     sub0,   "custom/weather":      text_c,
+            "hyprland/window":     sub0,   "custom/weather":      peach,
             "clock":               blue,   "tray":                sub0,
             "custom/updates":      green,  "pulseaudio":          blue,
             "network":             green,  "memory":              mauve,
             "cpu":                 peach,  "battery":             green,
             "custom/swaync":       text_c, "custom/power":        red_c,
+            "custom/settings":     sub0,
         }
+        for _suf in self._cfg.get("_user_modules", []):
+            _hex = self._cfg.get(f"custom/{_suf}", {}).get("_color", "")
+            MOD_COLOR[f"custom/{_suf}"] = _hex_to_rgb(_hex) if _hex else sub0
 
         # ── CSS natural dimensions (px, not pt) ───────────────────────────────
         ZONE_PV  = 2
@@ -2337,7 +2712,7 @@ class VsWaybarSettings(Gtk.Window):
         def _mod_w_px(mod):
             if mod == "hyprland/workspaces":
                 return ws_total_px + int(MOD_PH * 2 * sx)
-            s = (self._cfg.get("custom/arch", {}).get("arch-icon-glyph", "󰣇") if mod == "custom/arch" else MOD_SAMPLE.get(mod))
+            s = (self._cfg.get("custom/arch", {}).get("arch-icon-glyph", "󰣇") if mod == "custom/arch" else (MOD_SAMPLE.get(mod) or self._cfg.get(mod, {}).get("format") if mod.startswith("custom/") else MOD_SAMPLE.get(mod)))
             if s is None:
                 icon, name = MODULE_LABELS.get(mod, ("", mod.split("/")[-1]))
                 s = f"{icon} {name}" if icon else name
@@ -2391,7 +2766,8 @@ class VsWaybarSettings(Gtk.Window):
             mx = zx_px + ph
             for mod in mods:
                 mw  = _mod_w_px(mod)
-                col = blue if mod == self._selected_module else MOD_COLOR.get(mod, sub0)
+                _is_user = mod.startswith("custom/") and mod[7:] not in _RESERVED_CUSTOM
+                col = MOD_COLOR.get(mod, sub0) if (mod != self._selected_module or _is_user) else blue
 
                 if mod == "hyprland/workspaces":
                     # workspaces draw function starts at mx+MOD_PH (in natural, but we're already in px)
@@ -2413,7 +2789,7 @@ class VsWaybarSettings(Gtk.Window):
                         PangoCairo.show_layout(cr, lo)
                         wx_px += ww + sp_px
                 else:
-                    s = (self._cfg.get("custom/arch", {}).get("arch-icon-glyph", "󰣇") if mod == "custom/arch" else MOD_SAMPLE.get(mod))
+                    s = (self._cfg.get("custom/arch", {}).get("arch-icon-glyph", "󰣇") if mod == "custom/arch" else (MOD_SAMPLE.get(mod) or self._cfg.get(mod, {}).get("format") if mod.startswith("custom/") else MOD_SAMPLE.get(mod)))
                     if s is None:
                         icon, name = MODULE_LABELS.get(mod, ("", mod.split("/")[-1]))
                         s = f"{icon} {name}" if icon else name
@@ -2594,6 +2970,258 @@ class VsWaybarSettings(Gtk.Window):
         self._refresh_preview()
         self._status("↺  Default layout restored.")
 
+    # ── User module add/remove ────────────────────────────────────────────────
+
+    def _on_user_mod_add(self, *_):
+        dlg = Gtk.Dialog(title="New custom module", parent=self,
+                         flags=Gtk.DialogFlags.MODAL)
+        dlg.add_buttons("Cancel", Gtk.ResponseType.CANCEL,
+                        "Create", Gtk.ResponseType.OK)
+        box = dlg.get_content_area()
+        box.set_spacing(10)
+        box.set_margin_start(16); box.set_margin_end(16)
+        box.set_margin_top(12);   box.set_margin_bottom(12)
+        box.pack_start(_lbl("Module name (e.g. vpn, fan, ping)"), False, False, 0)
+        name_entry = Gtk.Entry()
+        name_entry.set_placeholder_text("mymodule")
+        box.pack_start(name_entry, False, False, 0)
+        box.pack_start(_hint("Will be added as  custom/<name>  in your config."), False, False, 0)
+        dlg.show_all()
+        if dlg.run() == Gtk.ResponseType.OK:
+            raw = name_entry.get_text().strip().lower()
+            raw = re.sub(r'[^a-z0-9_-]', '', raw)
+            dlg.destroy()
+            if not raw or raw in _RESERVED_CUSTOM:
+                self._err("Invalid or reserved name.")
+                return
+            suffix = raw
+            if suffix in self._cfg.get("_user_modules", []):
+                self._err(f"custom/{suffix} already exists.")
+                return
+            self._cfg.setdefault("_user_modules", []).append(suffix)
+            self._cfg[f"custom/{suffix}"] = {
+                "format":      "󰘳",
+                "exec":        "",
+                "return-type": "",
+                "interval":    30,
+                "on-click":    "",
+                "tooltip":     False,
+                "_color":      "#a6adc8",
+            }
+            store = self._w.get("user_mod_store")
+            if store:
+                store.append([f"custom/{suffix}", f"󰘳  {suffix}", False])
+                # select the new row so user can edit it immediately
+                tv = self._w.get("module_tv")
+                if tv:
+                    last = store.get_iter(Gtk.TreePath(len(store) - 1))
+                    tv.get_selection().select_iter(last)
+                    tv.scroll_to_cell(store.get_path(last))
+            self._refresh_preview()
+        else:
+            dlg.destroy()
+
+    def _on_user_mod_remove(self, *_):
+        tv = self._w.get("module_tv")
+        if not tv:
+            return
+        model, it = tv.get_selection().get_selected()
+        if not it:
+            return
+        mod_key = model[it][0]
+        if not mod_key.startswith("custom/"):
+            return
+        suffix = mod_key[7:]
+        if suffix in _RESERVED_CUSTOM:
+            return
+        self._cfg.get("_user_modules", []).remove(suffix)
+        self._cfg.pop(mod_key, None)
+        # remove from all zone lists (cfg + layout widgets)
+        for zone in ("modules-left", "modules-center", "modules-right"):
+            lst = self._cfg.get(zone, [])
+            if mod_key in lst:
+                lst.remove(mod_key)
+            zone_store = self._w.get(f"zone_{zone}")
+            if zone_store:
+                for row in list(zone_store):
+                    if row[0] == mod_key:
+                        zone_store.remove(row.iter)
+                        break
+        # remove row from sidebar store (in-place, no rebuild)
+        model.remove(it)
+        # clear module panel
+        if self._module_panel:
+            for child in self._module_panel.get_children():
+                self._module_panel.remove(child)
+            ph = _lbl("← Select a module", "hint-label")
+            ph.set_valign(Gtk.Align.CENTER)
+            ph.set_halign(Gtk.Align.CENTER)
+            self._module_panel.pack_start(ph, True, True, 0)
+            self._module_panel.show_all()
+        self._selected_module = None
+        self._refresh_preview()
+
+    def _build_user_module_form(self, mod: str) -> Gtk.Widget:
+        """Form for a user-defined custom module (launcher style — like custom/settings)."""
+        suffix = mod[7:]
+        cfg    = self._cfg.setdefault(mod, {})
+        fields = self._w.setdefault("mod_fields", {})
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        outer.set_margin_start(20); outer.set_margin_end(20)
+        outer.set_margin_top(14);   outer.set_margin_bottom(14)
+
+        outer.pack_start(_section(f"custom/{suffix}"), False, False, 0)
+        outer.pack_start(_hint(f"Waybar key: custom/{suffix}"), False, False, 4)
+
+        # ── Glyph picker ──────────────────────────────────────────────────────
+        outer.pack_start(_lbl("Icon", "field-label"), False, False, 8)
+
+        current_glyph = cfg.get("format", "󰘳")
+
+        # Button whose label IS the glyph — markup set before show, no idle_add needed
+        pick_btn = Gtk.Button()
+        pick_btn.get_style_context().add_class("open-btn")
+        pick_btn.set_halign(Gtk.Align.START)
+        btn_lbl = Gtk.Label()
+        btn_lbl.set_markup(
+            f"<span font_desc='JetBrainsMono Nerd Font Mono 28'>{current_glyph}</span>"
+            "   Choose icon…")
+        btn_lbl.show()
+        pick_btn.add(btn_lbl)
+
+        def _open_glyph_picker(_b):
+            sel = self._glyph_picker_dialog(cfg.get("format", "󰘳"))
+            if sel:
+                cfg["format"] = sel
+                btn_lbl.set_markup(
+                    f"<span font_desc='JetBrainsMono Nerd Font Mono 28'>{sel}</span>"
+                    "   Choose icon…")
+                # update sidebar label
+                store = self._w.get("user_mod_store")
+                if store:
+                    for row in store:
+                        if row[0] == mod:
+                            row[1] = f"{sel}  {suffix}"
+                            break
+                self._refresh_preview()
+
+        pick_btn.connect("clicked", _open_glyph_picker)
+        outer.pack_start(pick_btn, False, False, 8)
+
+        # ── Color ─────────────────────────────────────────────────────────────
+        outer.pack_start(_lbl("Color", "field-label"), False, False, 8)
+        color_row = Gtk.Box(spacing=8)
+        hex_val   = cfg.get("_color", "#a6adc8")
+        cbtn      = _color_btn(hex_val)
+        hex_entry = Gtk.Entry()
+        hex_entry.set_text(hex_val)
+        hex_entry.set_max_length(7)
+        hex_entry.set_width_chars(9)
+        fields["_color_hex"] = hex_entry
+
+        def _on_color(b, e=hex_entry):
+            h = _rgba_to_hex(b.get_rgba())
+            e.set_text(h)
+            cfg["_color"] = h
+            self._refresh_preview()
+
+        def _on_hex(e, b=cbtn):
+            val = e.get_text().strip()
+            if re.match(r'^#[0-9a-fA-F]{6}$', val):
+                b.set_rgba(_hex_to_rgba(val))
+                cfg["_color"] = val.lower()
+                self._refresh_preview()
+
+        cbtn.connect("color-set", _on_color)
+        hex_entry.connect("changed", _on_hex)
+        color_row.pack_start(cbtn,      False, False, 0)
+        color_row.pack_start(hex_entry, False, False, 0)
+        outer.pack_start(color_row, False, False, 8)
+
+        # ── On click ──────────────────────────────────────────────────────────
+        oc_e = Gtk.Entry()
+        oc_e.set_text(cfg.get("on-click", ""))
+        oc_e.set_placeholder_text("firefox, kitty, rofi -show run…")
+        fields["on-click"] = oc_e
+        outer.pack_start(_lbl("On click", "field-label"), False, False, 8)
+        outer.pack_start(oc_e, False, False, 0)
+
+        outer.pack_start(_hint(
+            "Waybar shows the icon — clicking runs this command."
+        ), False, False, 4)
+
+        # ── Tooltip text ──────────────────────────────────────────────────────
+        tt_e = Gtk.Entry()
+        tt_e.set_text(cfg.get("tooltip-format", ""))
+        tt_e.set_placeholder_text("Optional hover text")
+        fields["tooltip-format"] = tt_e
+        outer.pack_start(_lbl("Tooltip text", "field-label"), False, False, 8)
+        outer.pack_start(tt_e, False, False, 0)
+
+        return _scrolled(outer)
+
+    def _glyph_picker_dialog(self, current: str = "") -> str | None:
+        """Show a scrollable grid of Nerd Font glyphs; return selected or None."""
+        dlg = Gtk.Dialog(title="Choose icon", parent=self,
+                         flags=Gtk.DialogFlags.MODAL)
+        dlg.set_default_size(520, 420)
+        dlg.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        box   = dlg.get_content_area()
+        box.set_spacing(0)
+
+        # search entry
+        search = Gtk.SearchEntry()
+        search.set_placeholder_text("Filter icons…")
+        search.set_margin_start(12); search.set_margin_end(12)
+        search.set_margin_top(10);   search.set_margin_bottom(6)
+        box.pack_start(search, False, False, 0)
+
+        fb    = Gtk.FlowBox()
+        fb.set_max_children_per_line(8)
+        fb.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        fb.set_column_spacing(2)
+        fb.set_row_spacing(2)
+        fb.set_margin_start(8); fb.set_margin_end(8)
+
+        selected = [current]
+
+        def _make_btn(glyph, label):
+            btn = Gtk.Button()
+            btn.set_tooltip_text(label)
+            btn.set_size_request(52, 52)
+            lbl = Gtk.Label()
+            lbl.set_markup(
+                f"<span font='JetBrainsMono Nerd Font Mono 18'>{glyph}</span>")
+            btn.add(lbl)
+            btn.connect("clicked", lambda _b, g=glyph: (
+                selected.__setitem__(0, g),
+                dlg.response(Gtk.ResponseType.OK)
+            ))
+            return btn
+
+        all_btns = []
+        for glyph, label in _USER_GLYPHS:
+            btn = _make_btn(glyph, label)
+            fb.add(btn)
+            all_btns.append((glyph, label, btn))
+
+        def _filter(_entry):
+            q = _entry.get_text().strip().lower()
+            for g, lbl, btn in all_btns:
+                btn.get_parent().set_visible(not q or q in lbl.lower())
+
+        search.connect("changed", _filter)
+
+        sw = Gtk.ScrolledWindow()
+        sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        sw.add(fb)
+        box.pack_start(sw, True, True, 0)
+        dlg.show_all()
+        result = dlg.run()
+        dlg.destroy()
+        return selected[0] if result == Gtk.ResponseType.OK else None
+
     def _on_zone_add(self, _, zone_key, store):
         dlg = Gtk.Dialog(title="Add module", parent=self, flags=Gtk.DialogFlags.MODAL)
         dlg.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Add", Gtk.ResponseType.OK)
@@ -2602,17 +3230,26 @@ class VsWaybarSettings(Gtk.Window):
         content.set_margin_end(16)
         content.set_margin_top(16)
         content.set_margin_bottom(16)
-        sorted_mods = sorted(ALL_MODULES, key=lambda m: MODULE_LABELS.get(m, ("", m))[1].lower())
+        # combine built-in + user modules
+        user_mods = [f"custom/{s}" for s in self._cfg.get("_user_modules", [])]
+        all_mods  = ALL_MODULES + [m for m in user_mods if m not in ALL_MODULES]
+        def _mod_label(m):
+            if m in MODULE_LABELS:
+                return MODULE_LABELS[m]
+            suffix = m[7:] if m.startswith("custom/") else m
+            glyph  = self._cfg.get(m, {}).get("format", "󰘳")
+            return (glyph, suffix)
+        sorted_mods = sorted(all_mods, key=lambda m: _mod_label(m)[1].lower())
         combo = _combo(
-            [f"{MODULE_LABELS[m][0]}  {MODULE_LABELS[m][1]}" for m in sorted_mods],
-            MODULE_LABELS[sorted_mods[0]][1],
+            [f"{_mod_label(m)[0]}  {_mod_label(m)[1]}" for m in sorted_mods],
+            _mod_label(sorted_mods[0])[1],
         )
         content.add(combo)
         dlg.show_all()
         if dlg.run() == Gtk.ResponseType.OK:
-            idx = combo.get_active()
-            mod = sorted_mods[idx]
-            icon, name = MODULE_LABELS[mod]
+            idx  = combo.get_active()
+            mod  = sorted_mods[idx]
+            icon, name = _mod_label(mod)
             store.append([mod, f"{icon}  {name}"])
         dlg.destroy()
 
@@ -2661,6 +3298,12 @@ class VsWaybarSettings(Gtk.Window):
             icon, name = MODULE_LABELS.get(mod, ("", mod))
             store.append([mod, f"{icon}  {name}", False])
 
+        store.append(["", "User Commands", True])
+        for suffix in self._cfg.get("_user_modules", []):
+            glyph = self._cfg.get(f"custom/{suffix}", {}).get("format", "󰘳")
+            store.append([f"custom/{suffix}", f"{glyph}  {suffix}", False])
+        self._w["user_mod_store"] = store
+
         tv  = Gtk.TreeView(model=store)
         tv.set_headers_visible(False)
         col = Gtk.TreeViewColumn()
@@ -2688,6 +3331,23 @@ class VsWaybarSettings(Gtk.Window):
         sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         sw.add(tv)
         left.pack_start(sw, True, True, 0)
+
+        # Add / Remove buttons for user modules
+        btn_row = Gtk.Box(spacing=4)
+        btn_row.set_margin_start(6)
+        btn_row.set_margin_end(6)
+        btn_row.set_margin_top(4)
+        btn_row.set_margin_bottom(6)
+        add_btn = Gtk.Button(label="+ Add")
+        add_btn.get_style_context().add_class("open-btn")
+        add_btn.connect("clicked", self._on_user_mod_add)
+        rem_btn = Gtk.Button(label="− Remove")
+        rem_btn.get_style_context().add_class("open-btn")
+        rem_btn.connect("clicked", self._on_user_mod_remove)
+        btn_row.pack_start(add_btn, True, True, 0)
+        btn_row.pack_start(rem_btn, True, True, 0)
+        left.pack_start(btn_row, False, False, 0)
+
         paned.pack1(left, False, False)
 
         # Module config panel
@@ -2709,7 +3369,11 @@ class VsWaybarSettings(Gtk.Window):
         for child in self._module_panel.get_children():
             self._module_panel.remove(child)
         self._w["mod_fields"] = {}
-        panel = self._build_module_form(mod_key)
+        suffix = mod_key[7:] if mod_key.startswith("custom/") else ""
+        if suffix and suffix not in _RESERVED_CUSTOM:
+            panel = self._build_user_module_form(mod_key)
+        else:
+            panel = self._build_module_form(mod_key)
         self._module_panel.pack_start(panel, True, True, 0)
         self._module_panel.show_all()
         self._refresh_preview()
@@ -3103,6 +3767,12 @@ class VsWaybarSettings(Gtk.Window):
             btn_row.pack_start(yay_btn, True, True, 0)
             box.pack_start(btn_row, False, False, 0)
 
+        elif mod == "custom/settings":
+            box.pack_start(_section("Config shortcut"), False, False, 0)
+            add_entry("Icon (glyph)", "format",   cfg.get("format",   "󰒓"))
+            add_entry("On click",     "on-click", cfg.get("on-click", "vswaybar-studio"))
+            add_switch("Tooltip",     "tooltip",  cfg.get("tooltip",  False))
+
         elif mod == "custom/power":
             box.pack_start(_section("Power menu"), False, False, 0)
             add_entry("Format",   "format",   cfg.get("format", "⏻"))
@@ -3372,7 +4042,7 @@ class VsWaybarSettings(Gtk.Window):
         ("󰖐  Weather fallback",
          "~/.config/waybar/scripts/weather.sh",
          "Fallback weather via wttr.in (used if weather.py fails).",
-         None),
+         "weather.sh"),
         ("󰚰  Install updates",
          "~/.config/hypr/scripts/install-updates.sh",
          "ML4W updater — runs yay + flatpak update in a terminal with gum.",
@@ -3407,7 +4077,7 @@ class VsWaybarSettings(Gtk.Window):
         # ── editor ────────────────────────────────────────────────────────────
         tv = Gtk.TextView()
         tv.set_monospace(True)
-        tv.get_buffer().set_text(self._read_script(self._SCRIPTS[0][1]))
+        tv.get_buffer().set_text(self._read_script(self._SCRIPTS[0][1], self._SCRIPTS[0][3]))
 
         sw = Gtk.ScrolledWindow()
         sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
@@ -3449,17 +4119,25 @@ class VsWaybarSettings(Gtk.Window):
             _, path, desc, _dsrc = self._SCRIPTS[idx]
             path_lbl.set_text(os.path.expanduser(path))
             desc_lbl.set_text(desc)
-            tv.get_buffer().set_text(self._read_script(path))
+            tv.get_buffer().set_text(self._read_script(path, _dsrc))
 
         combo.connect("changed", _on_script_change)
 
         return outer
 
-    def _read_script(self, path: str) -> str:
+    def _read_script(self, path: str, default_src: str = None) -> str:
         try:
             with open(os.path.expanduser(path)) as f:
                 return f.read()
         except FileNotFoundError:
+            if default_src:
+                app_dir  = os.path.dirname(os.path.abspath(__file__))
+                src_path = os.path.join(app_dir, default_src)
+                try:
+                    with open(src_path) as f:
+                        return f.read()
+                except FileNotFoundError:
+                    pass
             return f"# {os.path.expanduser(path)}\n# File not found\n"
 
     def _script_text(self) -> str | None:
@@ -3479,16 +4157,11 @@ class VsWaybarSettings(Gtk.Window):
         if text is None: return
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
-            # backup if file already exists
-            if os.path.exists(path):
-                import datetime
-                ts  = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                bak = f"{path}.{ts}.bak"
-                import shutil as _sh
-                _sh.copy2(path, bak)
+            self._backup_configs()
             with open(path, "w") as f:
                 f.write(text)
-            self._status(f"✓  Saved  {os.path.basename(path)}", "· backup created")
+            os.chmod(path, 0o755)
+            self._status(f"✓  Saved  {os.path.basename(path)}")
         except Exception as e:
             self._err(f"Error saving script:\n{e}")
 
@@ -3508,8 +4181,10 @@ class VsWaybarSettings(Gtk.Window):
             path = dlg.get_filename()
             dlg.destroy()
             try:
+                self._backup_configs()
                 with open(path, "w") as f:
                     f.write(text)
+                os.chmod(path, 0o755)
                 self._status(f"✓  Saved as  {os.path.basename(path)}")
             except Exception as e:
                 self._err(f"Error saving:\n{e}")
@@ -3860,6 +4535,9 @@ class VsWaybarSettings(Gtk.Window):
         self._refresh_preview()
         if apply:
             try:
+                os.makedirs(os.path.dirname(self._config_path), exist_ok=True)
+                os.makedirs(os.path.dirname(self._css_path),    exist_ok=True)
+                self._backup_configs()
                 cfg_out = self._build_save_config()
                 css_out = self._build_save_css()
                 with open(self._config_path, "w") as f:
@@ -3869,8 +4547,11 @@ class VsWaybarSettings(Gtk.Window):
             except Exception as e:
                 self._err(f"No se pudo aplicar template:\n{e}")
                 return
-            subprocess.Popen(["pkill", "-x", "waybar"])
-            GLib.timeout_add(600, self._relaunch_waybar)
+            if self._waybar_proc and self._waybar_proc.poll() is None:
+                self._waybar_proc.terminate()
+            subprocess.run(["pkill", "-x", "waybar"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            GLib.timeout_add(500, self._relaunch_waybar)
             self._status(f"✓  Template «{name}» — reiniciando waybar…")
         else:
             self._status(f"👁  Vista previa «{name}» — sin cambios guardados.")
