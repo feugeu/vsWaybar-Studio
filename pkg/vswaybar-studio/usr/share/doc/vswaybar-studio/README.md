@@ -4,8 +4,7 @@ A visual configuration editor for [Waybar](https://github.com/Alexays/Waybar) â€
 
 No more editing JSON and CSS by hand. Design your Waybar with live feedback, templates and full module control.
 
-> Available on the AUR as [`vswaybar-studio`](https://aur.archlinux.org/packages/vswaybar-studio).
-> Single-file Python 3 + GTK3 application.
+> Single-file Python 3 + GTK3 application. No installation required.
 
 ---
 
@@ -59,17 +58,7 @@ Optional:
 
 ---
 
-## Installation
-
-### AUR (Arch Linux)
-
-```bash
-yay -S vswaybar-studio
-# or
-paru -S vswaybar-studio
-```
-
-### Manual
+## Usage
 
 ```bash
 git clone https://github.com/victorsosaMx/vsWaybar-Studio
