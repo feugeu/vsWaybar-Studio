@@ -4,6 +4,14 @@ All notable changes to vsWaybar Studio are documented here.
 
 ---
 
+## [1.0.2] — 2026-03-22
+
+### Bug fixes
+
+- **Buttons unresponsive when window is small** — all content now lives inside a root `ScrolledWindow`; Hyprland can resize the window to any size without misaligning event areas
+
+---
+
 ## [1.0.1] — 2026-03-21
 
 ### New features

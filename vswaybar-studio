@@ -2120,12 +2120,15 @@ class VsWaybarSettings(Gtk.Window):
 
     def _build_ui(self):
         self._w = {"css_colors": {}, "css_hex_entries": {}, "mod_fields": {}}
-        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        self.add(root)
-        root.pack_start(self._make_header(),      False, False, 0)
-        root.pack_start(self._make_bar_preview(), False, False, 0)
-        root.pack_start(self._make_notebook(),    True,  True,  0)
-        root.pack_start(self._make_statusbar(),   False, False, 0)
+        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        inner.pack_start(self._make_header(),      False, False, 0)
+        inner.pack_start(self._make_bar_preview(), False, False, 0)
+        inner.pack_start(self._make_notebook(),    True,  True,  0)
+        inner.pack_start(self._make_statusbar(),   False, False, 0)
+        sw = Gtk.ScrolledWindow()
+        sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        sw.add(inner)
+        self.add(sw)
         self._connect_preview_signals()
 
     def _make_statusbar(self) -> Gtk.Widget:
