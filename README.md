@@ -1,5 +1,9 @@
 # vsWaybar Studio
 
+<p align="center">
+  <img src="vswaybar-studio.png" alt="vsWaybar Studio" width="180"/>
+</p>
+
 [![AUR version](https://img.shields.io/aur/version/vswaybar-studio?color=1793d1&label=AUR&logo=arch-linux)](https://aur.archlinux.org/packages/vswaybar-studio)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -9,6 +13,18 @@ No more editing JSON and CSS by hand. Design your Waybar with live feedback, tem
 
 > Available on the AUR as [`vswaybar-studio`](https://aur.archlinux.org/packages/vswaybar-studio).
 > Single-file Python 3 + GTK3 application.
+
+---
+
+## Who is this for?
+
+vsWaybar Studio is built for people who want a great-looking, functional Waybar **without having to learn JSON, CSS and the Waybar wiki from scratch**.
+
+If you are new to Hyprland or tiling window managers, the default Waybar setup can feel overwhelming: a JSON config file, a separate CSS file, cryptic module keys, format strings, and a restart cycle just to see any change. vsWaybar Studio removes that friction — you pick a template, adjust colors and modules visually, hit Apply, and you have a working bar.
+
+**This tool is not meant to replace hand-crafted configs.** If you already know Waybar well and maintain a complex setup with custom scripts, named instances, grouped modules and per-module CSS overrides, you will quickly hit the edges of what the editor can do. That is by design — the goal is a smooth on-ramp, not a full IDE.
+
+What vsWaybar Studio does handle gracefully: it reads your existing config on startup, preserves any blocks it does not recognize, and writes them back untouched. So you can use it alongside a manually edited config without losing anything.
 
 ---
 
@@ -33,10 +49,10 @@ No more editing JSON and CSS by hand. Design your Waybar with live feedback, tem
 
 ## Features
 
-- **Live bar preview** — a thin strip at the top mirrors your actual Waybar in real time
+- **Live bar preview** — a thin strip at the top mirrors your actual Waybar in real time; always visible, never scrolls away
 - **Bar settings** — position, output/monitor, height, spacing, margins, layer
 - **Visual styles** — Bar (solid), Islands (floating zones), Modules (per-pill)
-- **Layout editor** — drag modules between Left / Center / Right zones
+- **Layout editor** — drag modules between Left / Center / Right zones for both bar and dock
 - **Module config** — click any module to edit its specific settings (format, intervals, on-click actions, colors, animations…)
 - **User Commands** — add unlimited custom launcher modules: choose an icon from a Nerd Font glyph picker, set a color and an on-click command; they appear in the bar as clickable icons
 - **Styling** — edit all 14 CSS color tokens, font, opacity, border-radius, padding
@@ -44,6 +60,7 @@ No more editing JSON and CSS by hand. Design your Waybar with live feedback, tem
 - **Palette tools** — load from image via [matugen](https://github.com/InioX/matugen), or generate a random palette
 - **Scripts editor** — edit `weather.py` and other custom scripts in-place
 - **Automatic backups** — every apply creates a timestamped backup of your config, CSS and scripts
+- **Lazy tab loading** — only the active tab is built at startup; remaining tabs load on first visit for fast startup
 - **Dark / Light editor theme** toggle
 - Apply writes `config` + `style.css` to disk and restarts Waybar automatically
 

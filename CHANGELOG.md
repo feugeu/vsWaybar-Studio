@@ -4,6 +4,56 @@ All notable changes to vsWaybar Studio are documented here.
 
 ---
 
+## [1.2.0] — 2026-03-29
+
+### Improvements
+
+- **Lazy tab loading** — only the Bar tab is built at startup; the remaining 8 tabs are built the first time they are visited; startup time is significantly reduced on lower-end hardware
+- **Sticky header** — the app header (title, Apply, Open, Export, Save as) and the live bar preview strip are now always visible regardless of scroll position; the Apply button can no longer scroll out of view
+
+### Bug fixes
+
+- **Labels invisible in light theme** — the system GTK theme was bleeding its own text color into the editor; added a global `label { color }` rule and `button label { color: inherit }` to guarantee correct colors in both dark and light editor modes
+- **Tab content not scrollable** — placeholder boxes used for lazy loading defaulted to horizontal orientation, so inner ScrolledWindows received width but not height and could not activate vertical scrolling; fixed to vertical orientation
+- **Layout tab — dock section and footer buttons not reachable** — the two expand zones (bar + dock) could exceed the available notebook height on a default-size window; the Layout tab is now wrapped in a ScrolledWindow
+- **Scripts tab — Save and Load buttons not reachable** — the script editor had a fixed 340 px minimum height that pushed the button row below the window boundary; removed the minimum so the editor flexes to available space and buttons are always visible
+- **Minimum window size enforced** — `set_size_request(900, 600)` prevents the window from being resized to a state where controls are inaccessible
+- **Deprecated `Gdk.Screen.get_default()`** — replaced with `Gdk.Display.get_default().get_default_screen()` with a safe fallback; suppresses deprecation warnings on GTK 3.22+
+
+---
+
+## [1.1.0] — 2026-03-29
+
+### New features
+
+- **Dock support** — full second bar configuration: position, height, spacing, layer, margins, font, bar-style, opacity, zone-radius, border-width, module layout and custom dock modules; config and CSS are saved as a unified array `[bar, dock]` with proper `window#waybar` / `window#waybar.dock` CSS namespacing so both bars coexist without conflicts
+- **WebKit2 live preview** — replaced the custom Cairo drawing engine with an embedded WebKit2 WebView; the preview now renders real CSS (flexbox, border-radius, rgba, keyframe animations) and accurately reflects bar-style, heights, zone padding and workspace animations
+- **Bar + Dock preview** — the WebView strip shows both bars simultaneously with their real module icons
+- **True center alignment in preview** — center zone is always perfectly centered regardless of left/right content width (flex:1 wrapper technique)
+- **Config auto-detection at startup** — tries `config.jsonc` → `config.json` → `config` in order; uses the first one found instead of always assuming `config.jsonc`
+- **Open dialog asks for both files** — the Open button now shows a single dialog with two file pickers (JSON config + CSS stylesheet), both pre-filled with current paths and browseable; supports `.json`, `.jsonc` and extensionless config files
+- **`backups/original/` — first-contact backup** — the first time a save triggers a backup and `backups/original/` does not exist (or is empty), a permanent copy of the user's original `config`, `style.css` and `scripts/` is saved there; never overwritten on subsequent saves
+- **Tab icons** — all notebook tabs now have Nerd Font icons
+- **vsHub tab** — discover and launch the full vs ecosystem from inside the app; fetches a live tool manifest from GitHub in the background, falls back to a built-in list when offline; installed tools get a Launch button, missing ones get GitHub + AUR install buttons
+- **JSONC support** — configs with `//` line comments, `/* */` block comments and trailing commas now load correctly; covers the default Waybar example config and most community-shared configs
+- **Named module instances** — `battery#bat2`, `pulseaudio#microphone`, `clock#UTC` and similar are now detected, shown in the Modules tab under "Named instances", editable via the base module form, and written back to the config on save
+- **Unknown module preservation** — config blocks for modules the app doesn't recognize (e.g. `mpd`, `sway/mode`, `keyboard-state`) are now preserved verbatim on save instead of being silently dropped
+- **Layout validation alert** — a dismissible warning banner appears below the preview when unrecognized modules are found in the layout zones or config; lists the affected modules by name
+- **Docs links** — each module form now has a "Docs ↗" button that opens the Waybar wiki page for that module
+
+### Bug fixes
+
+- **Double scroll at low resolutions** — removed the outer `ScrolledWindow` that wrapped the entire window; header and preview are now always visible and each tab manages its own scroll independently
+- **DnD between Layout columns not working** — `set_reorderable(True)` registers `GTK_TREE_MODEL_ROW` as the preferred DnD target; when dragging between TreeViews GTK negotiated that format and `data.get_text()` always returned None; replaced with `enable_model_drag_source` + `enable_model_drag_dest` using only `text/plain`, with a unified handler for both within-zone reorder and cross-zone moves
+- **vsHub "you are here" showing wrong app** — detection now compares `tool["exe"]` against `"vswaybar-studio"` locally instead of trusting the `"self"` flag from the remote JSON
+- **vshypr-theme-manager themes not applying (bar going black)** — `apply_waybar()` rewritten to update `@define-color` tokens in-place via regex; vsWaybar CSS now uses `alpha(@base, X)` so a single token change propagates to all backgrounds automatically
+- **Dock font-size not applying in system** — dock CSS now writes `window#waybar.dock * { font-size: Npx }` at the top of the dock block
+- **`window#dock` residual selectors** — three regex patterns in `_load_dock_config()` used the old selector; fixed to `window#waybar.dock`
+- **Bar height not reflected in islands/modules preview** — zone containers now get explicit `height: {bar_h - 4}px` (islands) and module pills get `height: {bar_h - 8}px` (modules)
+- **`@pink` / `@cyan` undefined in hover CSS** — changed to `@mauve` / `@blue` with correct Catppuccin RGB values
+
+---
+
 ## [1.0.2] — 2026-03-22
 
 ### Bug fixes

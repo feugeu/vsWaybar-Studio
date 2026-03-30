@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=vsWaybar Studio
+Comment=Visual configuration editor for Waybar
+Exec=vswaybar-studio
+Icon=vswaybar-studio
+Terminal=false
+Type=Application
+Categories=Settings;DesktopSettings;
+Keywords=waybar;wayland;hyprland;config;settings;bar;dock;
+StartupWMClass=vsWaybar Studio

@@ -1,18 +1,92 @@
 #!/usr/bin/env python3
 """vsWaybar Studio — graphical config editor for Waybar"""
 
-__version__ = "1.0.1"
+__version__ = "1.2.0"
 
 import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('PangoCairo', '1.0')
-from gi.repository import Gtk, Gdk, GLib, Pango, PangoCairo
+try:
+    gi.require_version('WebKit2', '4.1')
+except ValueError:
+    gi.require_version('WebKit2', '4.0')
+from gi.repository import Gtk, Gdk, GLib, Pango, PangoCairo, WebKit2
 import json, os, copy, subprocess, re, math, colorsys, random, shutil, datetime, locale
+import threading, urllib.request
+_json = json
+
+# ── JSONC parser ───────────────────────────────────────────────────────────────
+
+def _jsonc_loads(text: str):
+    """Parse JSON with C-style comments (// and /* */) and trailing commas."""
+    # Strip comments without touching strings
+    _PATTERN = re.compile(
+        r'"(?:[^"\\]|\\.)*"'   # string literals — keep as-is
+        r'|//[^\n]*'            # // line comments  — remove
+        r'|/\*.*?\*/',          # /* block comments */ — remove
+        re.DOTALL
+    )
+    def _strip(m):
+        s = m.group(0)
+        return s if s.startswith('"') else (" " if s.startswith("//") else "")
+    cleaned = _PATTERN.sub(_strip, text)
+    # Remove trailing commas before ] or }  (common in JSONC)
+    cleaned = re.sub(r',\s*([}\]])', r'\1', cleaned)
+    return json.loads(cleaned)
+
+def _jsonc_load(fp):
+    return _jsonc_loads(fp.read())
 
 # ── paths ─────────────────────────────────────────────────────────────────────
 
-CONFIG_PATH = os.path.expanduser("~/.config/waybar/config")
+def _detect_config_path():
+    """Return first existing waybar config, trying common names in order."""
+    base = os.path.expanduser("~/.config/waybar")
+    for name in ("config.jsonc", "config.json", "config"):
+        p = os.path.join(base, name)
+        if os.path.exists(p):
+            return p
+    return os.path.join(base, "config.jsonc")   # fallback (will be created on save)
+
+CONFIG_PATH = _detect_config_path()
 CSS_PATH    = os.path.expanduser("~/.config/waybar/style.css")
+
+DOCK_DEFAULTS = {
+    "position":       "bottom",
+    "height":         54,
+    "spacing":        6,
+    "margin-top":     0,
+    "margin-bottom":  8,
+    "margin-left":    0,
+    "margin-right":   0,
+    "layer":          "top",
+    "exclusive":      True,
+    "bar-style":      "islands",
+    "opacity":        90,
+    "zone-radius":    16,
+    "border-width":   2,
+    "mod-padding":    14,
+    "font-size":      22,
+    "font-family":    "JetBrainsMono Nerd Font",
+    "separators":     False,
+    "modules-left":   [],
+    "modules-center": [
+        "custom/rofi",
+        "custom/firefox",
+        "custom/nautilus",
+        "custom/dolphin",
+        "custom/terminal",
+        "custom/vscode",
+    ],
+    "modules-right":  [],
+    # Default definitions for predefined dock apps
+    "custom/rofi":     {"format": "󱓟", "on-click": "rofi -show drun",         "tooltip": True, "tooltip-format": "App Launcher", "_color": "#ff79c6"},
+    "custom/firefox":  {"format": "󰈹", "on-click": "firefox",                  "tooltip": True, "tooltip-format": "Firefox",      "_color": "#89b4fa"},
+    "custom/nautilus": {"format": "󰝰", "on-click": "nautilus",                 "tooltip": True, "tooltip-format": "Files",         "_color": "#f1fa8c"},
+    "custom/dolphin":  {"format": "󰝰", "on-click": "dolphin",                  "tooltip": True, "tooltip-format": "Dolphin",       "_color": "#f1fa8c"},
+    "custom/terminal": {"format": "󰄛", "on-click": "kitty",                    "tooltip": True, "tooltip-format": "Kitty",         "_color": "#50fa7b"},
+    "custom/vscode":   {"format": "󰨞", "on-click": "code",                     "tooltip": True, "tooltip-format": "VS Code",       "_color": "#bd93f9"},
+}
 
 # ── defaults ──────────────────────────────────────────────────────────────────
 
@@ -773,6 +847,56 @@ tooltip label {
 }
 """
 
+_DOCK_BASE_CSS = """\
+@define-color base     #282a36;
+@define-color mantle   #6272a4;
+@define-color crust    #1e1f29;
+@define-color surface0 #44475a;
+@define-color surface1 #6272a4;
+@define-color overlay0 #6272a4;
+@define-color text     #f8f8f2;
+@define-color subtext0 #abb2bf;
+@define-color blue     #bd93f9;
+@define-color mauve    #bd93f9;
+@define-color red      #ff5555;
+@define-color green    #50fa7b;
+@define-color yellow   #f1fa8c;
+@define-color peach    #ffb86c;
+
+* {
+    font-family: "JetBrainsMono Nerd Font", monospace;
+    font-size: 22px;
+}
+
+window#waybar.dock {
+    background: transparent;
+    border-radius: 0px;
+    border: none;
+    color: @text;
+}
+
+window#waybar.dock .modules-left,
+window#waybar.dock .modules-center,
+window#waybar.dock .modules-right {
+    background: rgba(40,42,54,0.90);
+    border-radius: 16px;
+    padding: 4px 14px;
+    border: 2px solid @surface0;
+    min-height: 0;
+}
+
+tooltip {
+    background: @surface0;
+    border: 1px solid @overlay0;
+    border-radius: 8px;
+    color: @text;
+}
+
+tooltip label {
+    color: @text;
+}
+"""
+
 ALL_MODULES = [
     # Hyprland
     "hyprland/workspaces", "hyprland/window",
@@ -786,6 +910,34 @@ ALL_MODULES = [
     "custom/arch", "custom/weather", "custom/updates",
     "custom/swaync", "custom/power", "custom/settings",
 ]
+
+_W = "https://github.com/Alexays/Waybar/wiki/Module:-"
+MODULE_WIKI = {
+    "hyprland/workspaces": _W + "Hyprland-Workspaces",
+    "hyprland/window":     _W + "Hyprland-Window",
+    "clock":               _W + "Clock",
+    "cpu":                 _W + "Cpu",
+    "memory":              _W + "Memory",
+    "temperature":         _W + "Temperature",
+    "disk":                _W + "Disk",
+    "network":             _W + "Network",
+    "bluetooth":           _W + "Bluetooth",
+    "pulseaudio":          _W + "Pulseaudio",
+    "wireplumber":         _W + "Wireplumber",
+    "battery":             _W + "Battery",
+    "backlight":           _W + "Backlight",
+    "idle_inhibitor":      _W + "Idle-Inhibitor",
+    "mpris":               _W + "Mpris",
+    "privacy":             _W + "Privacy",
+    "tray":                _W + "Tray",
+    "wlr/taskbar":         _W + "WLR-Taskbar",
+    "custom/arch":         _W + "Custom",
+    "custom/weather":      _W + "Custom",
+    "custom/updates":      _W + "Custom",
+    "custom/swaync":       _W + "Custom",
+    "custom/power":        _W + "Custom",
+    "custom/settings":     _W + "Custom",
+}
 
 MOD_SAMPLE = {
     "hyprland/workspaces": None,
@@ -1136,8 +1288,12 @@ notebook > header > tabs > tab:hover:not(:checked) {{
 .hint-label   {{ color: {t['dim']}; font-size: 12px; font-style: italic; }}
 .module-title {{ color: {t['txt']}; font-size: 15px; font-weight: bold; }}
 
-entry, spinbutton {{
+label {{ color: {t['txt']}; }}
+button label {{ color: inherit; }}
+
+entry, spinbutton, spinbutton entry, spinbutton text {{
     background-color: {t['hdr']};
+    background-image: none;
     color: {t['txt']};
     border: 1px solid {t['brd']};
     border-radius: 5px;
@@ -1146,9 +1302,22 @@ entry, spinbutton {{
     box-shadow: none;
 }}
 entry:focus, spinbutton:focus {{ border-color: {t['acc']}; }}
-
-combobox button {{
+spinbutton button {{
     background-color: {t['hdr']};
+    background-image: none;
+    color: {t['txt']};
+    border: none;
+    border-radius: 0;
+    padding: 2px 4px;
+    box-shadow: none;
+    min-height: 0;
+    min-width: 0;
+}}
+spinbutton button:hover {{ color: {t['acc']}; background-color: {t['hdr']}; }}
+
+combobox, combobox button, combobox entry {{
+    background-color: {t['hdr']};
+    background-image: none;
     color: {t['txt']};
     border: 1px solid {t['brd']};
     border-radius: 5px;
@@ -1185,6 +1354,17 @@ button:hover {{ border-color: {t['acc']}; color: {t['acc']}; }}
 }}
 .open-btn:hover {{ color: {t['acc']}; border-color: {t['acc']}; }}
 
+.plugin-card {{
+    background-color: {t['hdr']};
+    border: 1px solid {t['brd']};
+    border-radius: 6px;
+}}
+.plugin-card-active {{
+    background-color: {t['hdr']};
+    border: 1px solid {t['acc']};
+    border-radius: 6px;
+}}
+
 .theme-btn {{
     background-color: transparent;
     color: {t['dim']};
@@ -1211,6 +1391,21 @@ textview {{
 }}
 
 separator {{ background-color: {t['brd']}; min-height: 1px; margin: 4px 0; }}
+
+.alert-bar {{
+    background-color: rgba(200, 150, 0, 0.25);
+    border-top: 1px solid rgba(200,150,0,0.6);
+    border-bottom: 1px solid rgba(200,150,0,0.6);
+    padding: 6px 12px;
+    color: #1a1a00;
+}}
+.alert-bar-error {{
+    background-color: rgba(200, 50, 50, 0.25);
+    border-top: 1px solid rgba(200,50,50,0.6);
+    border-bottom: 1px solid rgba(200,50,50,0.6);
+    padding: 6px 12px;
+    color: #1a0000;
+}}
 
 .status-bar {{
     background-color: {t['hdr']};
@@ -1427,6 +1622,7 @@ class VsWaybarSettings(Gtk.Window):
     def __init__(self):
         super().__init__(title="vsWaybar Studio")
         self.set_default_size(960, 660)
+        self.set_size_request(900, 600)
         self.set_position(Gtk.WindowPosition.CENTER)
         self.connect("delete-event", self._on_close)
         self.connect("key-press-event", self._on_key)
@@ -1441,16 +1637,24 @@ class VsWaybarSettings(Gtk.Window):
         self._css_provider    = Gtk.CssProvider()
         self._path_lbl        = None
         self._status_timer    = None
-        self._selected_module = None
+        self._selected_module          = None
+        self._selected_module_is_dock  = False
         self._notebook        = None
         self._rnd_mode        = None
         self._module_panel    = None
-        self._bar_preview_da  = None
-        self._ws_anim_t       = 0.0
-        self._waybar_proc     = None   # process we launched; only kill this one
+        self._preview_webview  = None
+        self._waybar_proc      = None   # process we launched; only kill this one
+        self._dock_cfg         = {}
+        self._w_dock           = {}
+        self._dnd_source_store = None   # store origen del drag
+        self._dnd_source_id    = None   # module ID arrastrado
+        self._notebook         = None
+        self._nb_hub_idx       = None
 
+        _display = Gdk.Display.get_default()
+        _screen = _display.get_default_screen() if _display else Gdk.Screen.get_default()
         Gtk.StyleContext.add_provider_for_screen(
-            Gdk.Screen.get_default(),
+            _screen,
             self._css_provider,
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
         )
@@ -1458,7 +1662,6 @@ class VsWaybarSettings(Gtk.Window):
         self._load_config()
         self._build_ui()
         self.show_all()
-        GLib.timeout_add(50, self._ws_anim_tick)
 
     # ── events ────────────────────────────────────────────────────────────────
 
@@ -1489,9 +1692,17 @@ class VsWaybarSettings(Gtk.Window):
     def _load_config(self):
         self._cfg = copy.deepcopy(DEFAULTS)
         self._cfg["_user_modules"] = []
+        self._unknown_blocks = {}   # config blocks the app can't edit — preserved verbatim
+        _dock_raw = None
         try:
             with open(self._config_path) as f:
-                user = json.load(f)
+                _raw = _jsonc_load(f)
+            # Support unified array format [bar, dock] or legacy single-dict
+            if isinstance(_raw, list):
+                user      = _raw[0] if _raw else {}
+                _dock_raw = _raw[1] if len(_raw) > 1 else None
+            else:
+                user = _raw
             for k in ("layer", "output", "position", "height", "spacing",
                       "margin-top", "margin-bottom", "margin-left", "margin-right"):
                 if k in user:
@@ -1513,8 +1724,32 @@ class VsWaybarSettings(Gtk.Window):
                         self._cfg[k] = copy.deepcopy(v)
                         if suffix not in self._cfg["_user_modules"]:
                             self._cfg["_user_modules"].append(suffix)
+            # detect named instances: module#instancename (e.g. battery#bat2)
+            self._cfg["_named_instances"] = []
+            for k, v in user.items():
+                if "#" in k and isinstance(v, dict):
+                    base = k.split("#")[0]
+                    if base in ALL_MODULES:
+                        self._cfg[k] = copy.deepcopy(
+                            dict(copy.deepcopy(DEFAULTS.get(base, {})), **v)
+                        )
+                        self._cfg["_named_instances"].append(k)
             # strip deprecated/removed keys
             self._cfg.get("clock", {}).pop("format-alt", None)
+            # preserve unknown config blocks verbatim (not in ALL_MODULES, not custom/, no #)
+            _skip = (set(ALL_MODULES) |
+                     {"modules-left", "modules-center", "modules-right",
+                      "position", "height", "spacing", "layer", "output",
+                      "margin-top", "margin-bottom", "margin-left", "margin-right",
+                      "name", "exclusive", "passthrough", "gtk-layer-shell",
+                      "reload_style_on_change", "ipc", "mod"})
+            self._unknown_blocks = {}
+            for k, v in user.items():
+                if (k not in _skip and
+                        not k.startswith("custom/") and
+                        "#" not in k and
+                        isinstance(v, dict)):
+                    self._unknown_blocks[k] = copy.deepcopy(v)
         except FileNotFoundError:
             pass
         except Exception as e:
@@ -1532,8 +1767,10 @@ class VsWaybarSettings(Gtk.Window):
             mf = re.search(r'\*\s*\{[^}]*font-size:\s*(\d+)px', css_text, re.DOTALL)
             if mf:
                 self._cfg["font-size"] = int(mf.group(1))
-            # opacity: read from rgba() in modules block
-            mo = re.search(r'rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([\d.]+)\s*\)', css_text)
+            # opacity: read from alpha(@base, X) or legacy rgba()
+            mo = re.search(r'alpha\(@\w+,\s*([\d.]+)\)', css_text)
+            if not mo:
+                mo = re.search(r'rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([\d.]+)\s*\)', css_text)
             if mo:
                 self._cfg["opacity"] = int(float(mo.group(1)) * 100)
 
@@ -1607,7 +1844,7 @@ class VsWaybarSettings(Gtk.Window):
             # "islands" → window transparent, .modules-* have rgba background
             # "modules" → both transparent
             win_bg = re.search(
-                r'window#waybar\s*\{[^}]*background(?:-color)?:\s*([^;]+);',
+                r'window#waybar(?:\.bar)?\s*\{[^}]*background(?:-color)?:\s*([^;]+);',
                 css_text, re.DOTALL)
             mod_bg = re.search(
                 r'\.modules-left[^{]*\{[^}]*background(?:-color)?:\s*([^;]+);',
@@ -1615,6 +1852,10 @@ class VsWaybarSettings(Gtk.Window):
             def _is_opaque(val):
                 val = val.strip()
                 if val == "transparent": return False
+                # alpha(@token, X) format
+                ma = re.search(r'alpha\(@\w+,\s*([\d.]+)\)', val)
+                if ma: return float(ma.group(1)) > 0.01
+                # legacy rgba(r,g,b,X)
                 m = re.search(r'rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)', val)
                 return bool(m and float(m.group(1)) > 0.01)
             if win_bg and _is_opaque(win_bg.group(1)):
@@ -1634,7 +1875,7 @@ class VsWaybarSettings(Gtk.Window):
             # border-width: bar style stores it in window#waybar,
             # islands/modules store it in .modules-left (or its children)
             kbw = (
-                re.search(r'window#waybar\s*\{[^}]*border:\s*(\d+)px', css_text, re.DOTALL) or
+                re.search(r'window#waybar(?:\.bar)?\s*\{[^}]*border:\s*(\d+)px', css_text, re.DOTALL) or
                 re.search(r'\.modules-left[^{]*\{[^}]*border:\s*(\d+)px', css_text, re.DOTALL) or
                 re.search(r'\.modules-left[^{]*>[^{]*\*[^{]*\{[^}]*border:\s*(\d+)px', css_text, re.DOTALL)
             )
@@ -1654,6 +1895,85 @@ class VsWaybarSettings(Gtk.Window):
             pass
         except Exception as e:
             print(f"Warning CSS: {e}")
+        self._load_dock_config(_dock_raw)
+
+    def _load_dock_config(self, dock_dict=None):
+        """Load dock settings — from array element or DOCK_DEFAULTS."""
+        self._dock_cfg = copy.deepcopy(DOCK_DEFAULTS)
+        # ── JSON (from unified array[1]) ──────────────────────────────────────
+        user = dock_dict or {}
+        for k in ("position", "height", "spacing", "layer",
+                  "margin-top", "margin-bottom", "margin-left", "margin-right"):
+            if k in user:
+                self._dock_cfg[k] = user[k]
+        if "output" in user:
+            self._dock_cfg["output"] = user["output"]
+        if "exclusive" in user:
+            self._dock_cfg["exclusive"] = bool(user["exclusive"])
+        for zone in ("modules-left", "modules-center", "modules-right"):
+            if zone in user:
+                self._dock_cfg[zone] = user[zone]
+        for k, v in user.items():
+            if k.startswith("custom/") and isinstance(v, dict):
+                self._dock_cfg[k] = copy.deepcopy(v)
+        # ── CSS (from unified style.css — window#dock section) ────────────────
+        try:
+            with open(self._css_path) as f:
+                css = f.read()
+            # Extract window#dock block for dock-specific parsing
+            dock_block = re.search(
+                r'window#waybar\.dock\s*\{([^}]+)\}', css, re.DOTALL)
+            # opacity: rgba() inside window#dock .modules-* rules
+            # search in the area after window#dock
+            dock_section = css[css.find("window#waybar.dock"):] if "window#waybar.dock" in css else ""
+            mo = re.search(r'alpha\(@\w+,\s*([\d.]+)\)', dock_section)
+            if not mo:
+                mo = re.search(r'rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([\d.]+)\s*\)', dock_section)
+            if mo:
+                self._dock_cfg["opacity"] = int(float(mo.group(1)) * 100)
+            mzr = re.search(
+                r'window#waybar\.dock[^{]*\.modules-(?:left|center|right)[^{]*\{[^}]*border-radius:\s*(\d+)px',
+                css, re.DOTALL)
+            if mzr:
+                self._dock_cfg["zone-radius"] = int(mzr.group(1))
+            mbw = re.search(
+                r'window#waybar\.dock[^{]*\.modules-(?:left|center|right)[^{]*\{[^}]*border:\s*(\d+)px',
+                css, re.DOTALL)
+            if mbw:
+                self._dock_cfg["border-width"] = int(mbw.group(1))
+            mp = re.search(
+                r'window#waybar\.dock[^{]*\.modules-(?:left|center|right)[^{]*\{[^}]*padding:\s*\d+px\s+(\d+)px',
+                css, re.DOTALL)
+            if mp:
+                self._dock_cfg["mod-padding"] = int(mp.group(1))
+            # font-size and font-family: shared * { } block
+            mfs = re.search(r'\*\s*\{[^}]*font-size:\s*(\d+)px', css, re.DOTALL)
+            # font-size for dock may differ — look in dock section
+            mfs_dock = re.search(r'window#waybar\.dock\s[^}]+font-size:\s*(\d+)px', dock_section, re.DOTALL)
+            if mfs_dock:
+                self._dock_cfg["font-size"] = int(mfs_dock.group(1))
+            mff = re.search(r'\*\s*\{[^}]*font-family:\s*([^;]+);', css, re.DOTALL)
+            if mff:
+                first = mff.group(1).split(",")[0].strip().strip('"').strip("'")
+                if first and first.lower() not in ("monospace", "sans-serif", "serif"):
+                    self._dock_cfg["font-family"] = first
+            if '/* vswaybar:dock:sep */' in css:
+                self._dock_cfg["separators"] = True
+            # _color per dock module: #custom-X { color: ... } inside dock section
+            for mod in (self._dock_cfg.get("modules-left", []) +
+                        self._dock_cfg.get("modules-center", []) +
+                        self._dock_cfg.get("modules-right", [])):
+                if mod.startswith("custom/"):
+                    suffix = mod[7:]
+                    kc = re.search(
+                        rf'window#waybar\.dock\s+#{re.escape("custom-" + suffix)}\s*\{{[^}}]*color:\s*(#[0-9a-fA-F]{{6}})',
+                        css, re.DOTALL | re.IGNORECASE)
+                    if kc:
+                        self._dock_cfg.setdefault(mod, {})["_color"] = kc.group(1).lower()
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            print(f"Warning dock CSS: {e}")
 
     def _collect(self):
         w = self._w
@@ -1662,7 +1982,9 @@ class VsWaybarSettings(Gtk.Window):
                 self._cfg[k] = w[k].get_active_text()
         if "output" in w:
             val = w["output"].get_active_text() or ""
-            if val == "All monitors":
+            if val == "Disabled":
+                self._cfg["output"] = "__disabled__"
+            elif val == "All monitors":
                 self._cfg.pop("output", None)
             else:
                 self._cfg["output"] = val.strip()
@@ -1688,37 +2010,74 @@ class VsWaybarSettings(Gtk.Window):
             if re.match(r'^#[0-9a-fA-F]{6}$', val, re.IGNORECASE):
                 self._css_colors[name] = val.lower()
         self._collect_module_fields()
+        self._collect_dock()
+
+    def _collect_dock(self):
+        w = self._w_dock
+        if not w:
+            return
+        for k in ("position", "bar-style"):
+            if k in w:
+                self._dock_cfg[k] = w[k].get_active_text()
+        if "output" in w:
+            val = w["output"].get_active_text() or ""
+            if val == "Disabled":
+                self._dock_cfg["output"] = "__disabled__"
+            elif val == "All monitors":
+                self._dock_cfg.pop("output", None)
+            else:
+                self._dock_cfg["output"] = val.strip()
+        if "font-family" in w:
+            v = w["font-family"].get_font_name().strip()
+            if v:
+                family = Pango.FontDescription.from_string(v).get_family()
+                if family:
+                    self._dock_cfg["font-family"] = family
+        for k in ("height", "spacing", "margin-top", "margin-bottom",
+                  "margin-left", "margin-right", "zone-radius",
+                  "font-size", "mod-padding", "border-width", "opacity"):
+            if k in w:
+                self._dock_cfg[k] = int(w[k].get_value())
+        if "separators" in w:
+            self._dock_cfg["separators"] = w["separators"].get_active()
+        if "exclusive" in w:
+            self._dock_cfg["exclusive"] = w["exclusive"].get_active()
+        for zone in ("modules-left", "modules-center", "modules-right"):
+            store = w.get(f"zone_{zone}")
+            if store:
+                self._dock_cfg[zone] = [row[0] for row in store]
 
     def _collect_module_fields(self):
         mod = self._selected_module
         if not mod:
             return
-        if mod not in self._cfg:
-            self._cfg[mod] = {}
+        target_cfg = self._dock_cfg if self._selected_module_is_dock else self._cfg
+        if mod not in target_cfg:
+            target_cfg[mod] = {}
         fields = self._w.get("mod_fields", {})
         for fkey, widget in fields.items():
             if "." in fkey:
                 parent, child = fkey.split(".", 1)
-                if parent not in self._cfg[mod] or not isinstance(self._cfg[mod][parent], dict):
-                    self._cfg[mod][parent] = {}
+                if parent not in target_cfg[mod] or not isinstance(target_cfg[mod][parent], dict):
+                    target_cfg[mod][parent] = {}
                 if isinstance(widget, Gtk.SpinButton):   # SpinButton before Entry!
-                    self._cfg[mod][parent][child] = int(widget.get_value())
+                    target_cfg[mod][parent][child] = int(widget.get_value())
                 elif isinstance(widget, Gtk.Entry):
-                    self._cfg[mod][parent][child] = widget.get_text()
+                    target_cfg[mod][parent][child] = widget.get_text()
                 elif isinstance(widget, Gtk.Switch):
-                    self._cfg[mod][parent][child] = widget.get_active()
+                    target_cfg[mod][parent][child] = widget.get_active()
             elif isinstance(widget, Gtk.SpinButton):     # SpinButton before Entry!
-                self._cfg[mod][fkey] = int(widget.get_value())
+                target_cfg[mod][fkey] = int(widget.get_value())
             elif isinstance(widget, Gtk.Entry):
-                self._cfg[mod][fkey] = widget.get_text()
+                target_cfg[mod][fkey] = widget.get_text()
             elif isinstance(widget, Gtk.Switch):
-                self._cfg[mod][fkey] = widget.get_active()
+                target_cfg[mod][fkey] = widget.get_active()
             elif isinstance(widget, Gtk.ComboBoxText):
-                self._cfg[mod][fkey] = widget.get_active_text()
+                target_cfg[mod][fkey] = widget.get_active_text()
 
         # strip keys that must never appear in saved JSON
         if mod == "clock":
-            self._cfg[mod].pop("format-alt", None)
+            target_cfg[mod].pop("format-alt", None)
 
         # collect color for user modules
         suffix = mod[7:] if mod.startswith("custom/") else ""
@@ -1727,7 +2086,7 @@ class VsWaybarSettings(Gtk.Window):
             if col_entry and isinstance(col_entry, Gtk.Entry):
                 val = col_entry.get_text().strip()
                 if re.match(r'^#[0-9a-fA-F]{6}$', val, re.IGNORECASE):
-                    self._cfg[mod]["_color"] = val.lower()
+                    target_cfg[mod]["_color"] = val.lower()
 
         # rebuild custom/arch format from size + color + glyph controls
         if mod == "custom/arch":
@@ -1739,18 +2098,18 @@ class VsWaybarSettings(Gtk.Window):
                 col    = col_w.get_text().strip()   if isinstance(col_w,   Gtk.Entry) else ""
                 glyph  = glyph_w.get_text().strip() if isinstance(glyph_w, Gtk.Entry) else "󰣇"
                 if not glyph: glyph = "󰣇"
-                self._cfg[mod].pop("arch-icon-size",  None)
-                self._cfg[mod].pop("arch-icon-color",  None)
+                target_cfg[mod].pop("arch-icon-size",  None)
+                target_cfg[mod].pop("arch-icon-color",  None)
                 col_attr = f" color='{col}'" if re.match(r'^#[0-9a-fA-F]{6}$', col, re.IGNORECASE) else ""
-                self._cfg[mod]["format"]          = f"<span font='JetBrainsMono Nerd Font Mono {sz}'{col_attr}>{glyph}</span>"
-                self._cfg[mod]["arch-icon-glyph"] = glyph
+                target_cfg[mod]["format"]          = f"<span font='JetBrainsMono Nerd Font Mono {sz}'{col_attr}>{glyph}</span>"
+                target_cfg[mod]["arch-icon-glyph"] = glyph
 
     def _build_save_config(self) -> dict:
         out = {}
         for k in ("position", "height", "spacing",
                   "margin-top", "margin-bottom", "margin-left", "margin-right"):
             out[k] = self._cfg.get(k, DEFAULTS.get(k))
-        if "output" in self._cfg:
+        if "output" in self._cfg and self._cfg["output"] != "__disabled__":
             out["output"] = self._cfg["output"]
         out["modules-left"]   = self._cfg["modules-left"]
         out["modules-center"] = self._cfg["modules-center"]
@@ -1763,6 +2122,11 @@ class VsWaybarSettings(Gtk.Window):
                         if _k in mod_cfg and str(mod_cfg[_k]).strip() == "":
                             mod_cfg.pop(_k)
                 out[mod] = mod_cfg
+        # named instances (e.g. battery#bat2, pulseaudio#microphone)
+        for k in self._cfg.get("_named_instances", []):
+            if k in self._cfg:
+                mod_cfg = dict(self._cfg[k])
+                out[k] = mod_cfg
         # user-defined custom modules (launcher style — only relevant keys)
         for suffix in self._cfg.get("_user_modules", []):
             key = f"custom/{suffix}"
@@ -1777,7 +2141,65 @@ class VsWaybarSettings(Gtk.Window):
                     entry["tooltip-format"] = tt
                     entry["tooltip"] = True
                 out[key] = entry
-        return out
+        # dock modules used in bar zones — copy definition from dock_cfg
+        bar_mods = (self._cfg.get("modules-left", []) +
+                    self._cfg.get("modules-center", []) +
+                    self._cfg.get("modules-right", []))
+        for mod in bar_mods:
+            if mod not in out and mod in self._dock_cfg:
+                mc = self._dock_cfg[mod]
+                entry = {"format": mc.get("format", "󰘳"), "tooltip": mc.get("tooltip", False)}
+                oc = mc.get("on-click", "").strip()
+                if oc:
+                    entry["on-click"] = oc
+                tt = mc.get("tooltip-format", "").strip()
+                if tt:
+                    entry["tooltip-format"] = tt
+                    entry["tooltip"] = True
+                out[mod] = entry
+        out["name"] = "bar"
+
+        # unknown blocks — preserved verbatim so we don't drop user config
+        for k, v in self._unknown_blocks.items():
+            if k not in out:
+                out[k] = v
+
+        # ── Dock config ───────────────────────────────────────────────────────
+        dock = {}
+        dock["name"] = "dock"
+        for k in ("position", "height", "spacing", "layer",
+                  "margin-top", "margin-bottom", "margin-left", "margin-right"):
+            dock[k] = self._dock_cfg.get(k, DOCK_DEFAULTS.get(k))
+        if "output" in self._dock_cfg and self._dock_cfg["output"] != "__disabled__":
+            dock["output"] = self._dock_cfg["output"]
+        dock["exclusive"]       = self._dock_cfg.get("exclusive", True)
+        dock["passthrough"]     = False
+        dock["gtk-layer-shell"] = True
+        for zone in ("modules-left", "modules-center", "modules-right"):
+            dock[zone] = self._dock_cfg.get(zone, [])
+        all_dock_mods = dock["modules-left"] + dock["modules-center"] + dock["modules-right"]
+        for mod in all_dock_mods:
+            if mod.startswith("custom/") and mod in self._dock_cfg:
+                mc    = self._dock_cfg[mod]
+                entry = {"format": mc.get("format", "󰘳"), "tooltip": False}
+                oc    = mc.get("on-click", "").strip()
+                if oc:
+                    entry["on-click"] = oc
+                tt = mc.get("tooltip-format", "").strip()
+                if tt:
+                    entry["tooltip-format"] = tt
+                    entry["tooltip"]        = True
+                dock[mod] = entry
+
+        # Return array, filtering disabled bars
+        bar_disabled  = self._cfg.get("output")      == "__disabled__"
+        dock_disabled = self._dock_cfg.get("output") == "__disabled__"
+        result = []
+        if not bar_disabled:
+            result.append(out)
+        if not dock_disabled:
+            result.append(dock)
+        return result
 
     def _build_save_css(self) -> str:
         try:
@@ -1785,8 +2207,9 @@ class VsWaybarSettings(Gtk.Window):
                 css_text = f.read()
         except FileNotFoundError:
             css_text = ""
-        _required = ("window#waybar", ".modules-left", "@keyframes ws-active", "#workspaces button")
-        if not css_text.strip() or not all(m in css_text for m in _required):
+        _required = (".modules-left", "@keyframes ws-active", "#workspaces button")
+        _has_win  = "window#waybar" in css_text
+        if not css_text.strip() or not _has_win or not all(m in css_text for m in _required):
             css_text = _BASE_CSS
 
         # ── @define-color replacements ────────────────────────────────────────
@@ -1799,16 +2222,15 @@ class VsWaybarSettings(Gtk.Window):
                 css_text = f"@define-color {name} {val};\n" + css_text
 
         # ── derived values ────────────────────────────────────────────────────
-        base_hex  = self._css_colors.get("base",     "#11140e").lstrip("#")
         s0_color  = self._css_colors.get("surface0", "#1d211a")
-        br, bg, bb = (int(base_hex[i:i+2], 16) for i in (0, 2, 4))
-        rgb       = f"{br},{bg},{bb}"
         zone_r    = self._cfg.get("zone-radius",   12)
         bar_style = self._cfg.get("bar-style",    "islands")
         opacity   = self._cfg.get("opacity",      95) / 100
         font_sz   = self._cfg.get("font-size",    13)
         mod_pad   = self._cfg.get("mod-padding",  8)
         brd_w     = self._cfg.get("border-width", 1)
+        # alpha() usa tokens CSS → backgrounds responden a vshypr-theme-manager
+        bg_alpha  = f"alpha(@base, {opacity:.2f})"
 
         # ── global font-family + font-size ───────────────────────────────────
         font_fam_raw = self._cfg.get("font-family", "Product Sans")
@@ -1826,44 +2248,44 @@ class VsWaybarSettings(Gtk.Window):
         )
 
         # ── window#waybar background + radius (barra = full pill) ───────────
-        win_bg = f"rgba({rgb},{opacity:.2f})" if bar_style == "bar" else "transparent"
+        win_bg = bg_alpha if bar_style == "bar" else "transparent"
         win_r  = zone_r if bar_style == "bar" else 0
         css_text = re.sub(
-            r'(window#waybar\s*\{[^}]*?background:\s*)[^;]+;',
+            r'(window#waybar(?:\.bar)?\s*\{[^}]*?background:\s*)[^;]+;',
             rf'\g<1>{win_bg};',
             css_text, flags=re.DOTALL
         )
         # Add/replace border-radius inside window#waybar block
-        if re.search(r'window#waybar\s*\{[^}]*?border-radius:', css_text, re.DOTALL):
+        if re.search(r'window#waybar(?:\.bar)?\s*\{[^}]*?border-radius:', css_text, re.DOTALL):
             css_text = re.sub(
-                r'(window#waybar\s*\{[^}]*?border-radius:\s*)[^;]+;',
+                r'(window#waybar(?:\.bar)?\s*\{[^}]*?border-radius:\s*)[^;]+;',
                 rf'\g<1>{win_r}px;',
                 css_text, flags=re.DOTALL
             )
         else:
             css_text = re.sub(
-                r'(window#waybar\s*\{[^}]*?)(color:\s*[^;]+;)',
+                r'(window#waybar(?:\.bar)?\s*\{[^}]*?)(color:\s*[^;]+;)',
                 rf'\g<1>\g<2>\n    border-radius: {win_r}px;',
                 css_text, flags=re.DOTALL
             )
 
         # ── window#waybar border (barra style only) ──────────────────────────
-        win_brd = f"{brd_w}px solid {s0_color}" if bar_style == "bar" and brd_w > 0 else "none"
-        if re.search(r'window#waybar\s*\{[^}]*?border:', css_text, re.DOTALL):
+        win_brd = f"{brd_w}px solid @surface0" if bar_style == "bar" and brd_w > 0 else "none"
+        if re.search(r'window#waybar(?:\.bar)?\s*\{[^}]*?border:', css_text, re.DOTALL):
             css_text = re.sub(
-                r'(window#waybar\s*\{[^}]*?border:\s*)[^;]+;',
+                r'(window#waybar(?:\.bar)?\s*\{[^}]*?border:\s*)[^;]+;',
                 rf'\g<1>{win_brd};',
                 css_text, flags=re.DOTALL
             )
         else:
             css_text = re.sub(
-                r'(window#waybar\s*\{[^}]*?border-radius:\s*[^;]+;)',
+                r'(window#waybar(?:\.bar)?\s*\{[^}]*?border-radius:\s*[^;]+;)',
                 rf'\g<1>\n    border: {win_brd};',
                 css_text, flags=re.DOTALL
             )
 
         # ── .modules-left/center/right block ─────────────────────────────────
-        brd = f"{brd_w}px solid {s0_color}" if brd_w > 0 else "none"
+        brd = f"{brd_w}px solid @surface0" if brd_w > 0 else "none"
         if bar_style == "bar":
             modules_block = (
                 ".modules-left,\n.modules-center,\n.modules-right {\n"
@@ -1883,7 +2305,7 @@ class VsWaybarSettings(Gtk.Window):
                 "    min-height: 0;\n"
                 "}\n\n"
                 ".modules-left > *,\n.modules-center > *,\n.modules-right > * {\n"
-                f"    background: rgba({rgb},{opacity:.2f});\n"
+                f"    background: {bg_alpha};\n"
                 f"    border-radius: {zone_r}px;\n"
                 f"    border: {brd};\n"
                 f"    padding: 0 {mod_pad}px;\n"
@@ -1893,7 +2315,7 @@ class VsWaybarSettings(Gtk.Window):
         else:  # islands
             modules_block = (
                 ".modules-left,\n.modules-center,\n.modules-right {\n"
-                f"    background: rgba({rgb},{opacity:.2f});\n"
+                f"    background: {bg_alpha};\n"
                 f"    border-radius: {zone_r}px;\n"
                 f"    padding: 2px {mod_pad}px;\n"
                 f"    border: {brd};\n"
@@ -1916,39 +2338,63 @@ class VsWaybarSettings(Gtk.Window):
         arch_c  = self._cfg.get("custom/arch", {})
         arch_pl = arch_c.get("arch-pad-left",  8)
         arch_pr = arch_c.get("arch-pad-right", 8)
+        B = "window#waybar"
         css_text += (
             f"\n/* vswaybar:modpad */\n"
-            f"#clock, #cpu, #memory, #network, #pulseaudio, #battery, #tray,\n"
-            f"#custom-updates, #custom-weather, #custom-swaync, #custom-power, #custom-settings {{\n"
+            f"{B} #clock, {B} #cpu, {B} #memory, {B} #network,\n"
+            f"{B} #pulseaudio, {B} #battery, {B} #tray,\n"
+            f"{B} #custom-updates, {B} #custom-weather, {B} #custom-swaync,\n"
+            f"{B} #custom-power, {B} #custom-settings {{\n"
             f"    padding: 0 {mod_pad}px;\n"
             f"}}\n"
-            f"#custom-arch {{\n"
+            f"{B} #custom-arch {{\n"
             f"    padding: 0 {arch_pr}px 0 {arch_pl}px;\n"
             f"}}\n"
         )
-        # user modules: one block each with padding + color (avoids multi-selector collision)
+        # user modules: one block each with padding + color
         for suffix in self._cfg.get("_user_modules", []):
             color = self._cfg.get(f"custom/{suffix}", {}).get("_color", "#a6adc8")
             css_text += (
-                f"#custom-{suffix} {{\n"
+                f"{B} #custom-{suffix} {{\n"
+                f"    padding: 0 {mod_pad}px;\n"
+                f"    color: {color};\n"
+                f"}}\n"
+            )
+        # dock modules used in bar zones — padding + color (window#bar scoped)
+        bar_all = (self._cfg.get("modules-left", []) +
+                   self._cfg.get("modules-center", []) +
+                   self._cfg.get("modules-right", []))
+        seen_dock = set()
+        for mod in bar_all:
+            if not mod.startswith("custom/"):
+                continue
+            if mod not in self._dock_cfg:
+                continue
+            if mod in seen_dock:
+                continue
+            seen_dock.add(mod)
+            suffix = mod[7:]
+            color = self._dock_cfg[mod].get("_color", "@text")
+            css_text += (
+                f"{B} #custom-{suffix} {{\n"
                 f"    padding: 0 {mod_pad}px;\n"
                 f"    color: {color};\n"
                 f"}}\n"
             )
 
-        # ── separators (islas / barra only) ──────────────────────────────────
+        # ── separators (bar namespace) ────────────────────────────────────────
         separators = self._cfg.get("separators", False)
         css_text = re.sub(r'\n*/\* vswaybar:sep \*/.*$', '', css_text, flags=re.DOTALL)
         if separators and bar_style in ("islands", "bar"):
             sep_color = s0_color
             css_text += (
                 f"\n/* vswaybar:sep */\n"
-                f".modules-left > *, .modules-center > *, .modules-right > * {{\n"
+                f"{B} .modules-left > *, {B} .modules-center > *, {B} .modules-right > * {{\n"
                 f"    border-right: {brd_w}px solid {sep_color};\n"
                 f"}}\n"
-                f".modules-left > *:last-child,\n"
-                f".modules-center > *:last-child,\n"
-                f".modules-right > *:last-child {{\n"
+                f"{B} .modules-left > *:last-child,\n"
+                f"{B} .modules-center > *:last-child,\n"
+                f"{B} .modules-right > *:last-child {{\n"
                 f"    border-right: none;\n"
                 f"}}\n"
             )
@@ -2005,7 +2451,227 @@ class VsWaybarSettings(Gtk.Window):
             css_text, flags=re.DOTALL
         )
 
+        # ── append dock CSS (fully namespaced under window#waybar.dock) ─────────
+        # strip previous dock section if present
+        css_text = re.sub(r'\n*/\* vswaybar:dock:begin \*/.*$', '', css_text, flags=re.DOTALL)
+        css_text += "\n\n/* vswaybar:dock:begin */\n"
+        css_text += self._build_save_dock_css()
+
         return css_text
+
+    def _build_save_dock_config(self) -> dict:
+        out = {}
+        for k in ("position", "height", "spacing", "layer",
+                  "margin-top", "margin-bottom", "margin-left", "margin-right"):
+            out[k] = self._dock_cfg.get(k, DOCK_DEFAULTS.get(k))
+        if "output" in self._dock_cfg and self._dock_cfg["output"] != "__disabled__":
+            out["output"] = self._dock_cfg["output"]
+        out["exclusive"]       = self._dock_cfg.get("exclusive", True)
+        out["passthrough"]     = False
+        out["gtk-layer-shell"] = True
+        out["modules-left"]    = self._dock_cfg.get("modules-left",   [])
+        out["modules-center"]  = self._dock_cfg.get("modules-center", [])
+        out["modules-right"]   = self._dock_cfg.get("modules-right",  [])
+        all_mods = out["modules-left"] + out["modules-center"] + out["modules-right"]
+        for mod in all_mods:
+            if mod.startswith("custom/") and mod in self._dock_cfg:
+                mc    = self._dock_cfg[mod]
+                entry = {"format": mc.get("format", "󰘳"), "tooltip": False}
+                oc    = mc.get("on-click", "").strip()
+                if oc:
+                    entry["on-click"] = oc
+                tt = mc.get("tooltip-format", "").strip()
+                if tt:
+                    entry["tooltip-format"] = tt
+                    entry["tooltip"]        = True
+                out[mod] = entry
+        return out
+
+    def _build_save_dock_css(self) -> str:
+        """Generate dock CSS completely from scratch — no file patching."""
+        zone_r    = self._dock_cfg.get("zone-radius",  16)
+        bar_style = self._dock_cfg.get("bar-style",    "islands")
+        opacity   = self._dock_cfg.get("opacity",       90) / 100
+        font_sz   = self._dock_cfg.get("font-size",     22)
+        mod_pad   = self._dock_cfg.get("mod-padding",   14)
+        brd_w     = self._dock_cfg.get("border-width",  2)
+        font_fam  = self._dock_cfg.get("font-family",   "JetBrainsMono Nerd Font")
+        separators= self._dock_cfg.get("separators",    False)
+        # alpha() usa tokens CSS → backgrounds responden a vshypr-theme-manager
+        bg_alpha  = f"alpha(@base, {opacity:.2f})"
+        brd  = f"{brd_w}px solid @surface0" if brd_w > 0 else "none"
+        pv, ph = 4, mod_pad
+
+        D  = "window#waybar.dock"   # namespace prefix
+        out = []
+
+        # ── font override (dock overrides global * { font-size }) ─────────────
+        out.append(f"{D} * {{")
+        out.append(f'    font-family: "{font_fam}", monospace;')
+        out.append(f"    font-size: {font_sz}px;")
+        out.append("}")
+        out.append("")
+
+        # ── window#waybar.dock ────────────────────────────────────────────────
+        win_bg = bg_alpha if bar_style == "bar" else "transparent"
+        out.append(f"{D} {{")
+        out.append(f"    background: {win_bg};")
+        out.append("    border: none;")
+        out.append("}")
+        out.append("")
+
+        # ── module zone blocks ────────────────────────────────────────────────
+        active_zones = [z for z in ("modules-left", "modules-center", "modules-right")
+                        if self._dock_cfg.get(z)]
+
+        def _zone_sels(zones, child=""):
+            suffix = f" > {child}" if child else ""
+            return ",\n".join(f"{D} .{z}{suffix}" for z in zones)
+
+        if bar_style == "bar":
+            out.append(f"{_zone_sels(['modules-left','modules-center','modules-right'])} {{")
+            out.append("    background: transparent;")
+            out.append("    border-radius: 0;")
+            out.append(f"    padding: {pv}px {ph}px;")
+            out.append("    border: none;")
+            out.append("    min-height: 0;")
+            out.append("}")
+        elif bar_style == "islands":
+            out.append(f"{_zone_sels(['modules-left','modules-center','modules-right'])} {{")
+            out.append("    background: transparent;")
+            out.append("    border: none;")
+            out.append("    padding: 0;")
+            out.append("    min-height: 0;")
+            out.append("    min-width: 0;")
+            out.append("}")
+            if active_zones:
+                out.append("")
+                out.append(f"{_zone_sels(active_zones)} {{")
+                out.append(f"    background: {bg_alpha};")
+                out.append(f"    border-radius: {zone_r}px;")
+                out.append(f"    padding: {pv}px {ph}px;")
+                out.append(f"    border: {brd};")
+                out.append("    min-height: 0;")
+                out.append("}")
+        else:  # modules
+            out.append(f"{_zone_sels(['modules-left','modules-center','modules-right'])} {{")
+            out.append("    background: transparent;")
+            out.append("    border-radius: 0;")
+            out.append(f"    padding: {pv}px 0;")
+            out.append("    border: none;")
+            out.append("    min-height: 0;")
+            out.append("}")
+            out.append("")
+            out.append(f"{_zone_sels(['modules-left','modules-center','modules-right'], '*')} {{")
+            out.append(f"    background: {bg_alpha};")
+            out.append(f"    border-radius: {zone_r}px;")
+            out.append(f"    padding: {pv}px {ph}px;")
+            out.append(f"    border: {brd};")
+            out.append("    margin: 0 2px;")
+            out.append("}")
+        out.append("")
+
+        # ── per-icon rules (namespaced under window#dock) ─────────────────────
+        all_dock_mods = []
+        for zone in ("modules-left", "modules-center", "modules-right"):
+            for mod in self._dock_cfg.get(zone, []):
+                if mod.startswith("custom/") and mod not in all_dock_mods:
+                    all_dock_mods.append(mod)
+
+        if all_dock_mods:
+            _HOVER_DEFAULTS = {
+                "rofi":     ("@mauve",  "203,166,247"),
+                "firefox":  ("@blue",   "139,213,202"),
+                "nautilus": ("@yellow", "249,226,175"),
+                "dolphin":  ("@yellow", "249,226,175"),
+                "terminal": ("@green",  "166,227,161"),
+                "vscode":   ("@mauve",  "203,166,247"),
+            }
+            ids = ",\n".join(f"{D} #{m.replace('/', '-')}" for m in all_dock_mods)
+            out.append(f"/* Dock icons */\n{ids} {{")
+            out.append(f"    padding: {pv}px {ph}px;")
+            out.append("    border-radius: 10px;")
+            out.append("    transition: all 0.2s ease;")
+            out.append("    min-width: 30px;")
+            out.append("}")
+            out.append("")
+            for mod in all_dock_mods:
+                css_id = f"{D} #{mod.replace('/', '-')}"
+                col = self._dock_cfg.get(mod, {}).get("_color", "")
+                if re.match(r'^#[0-9a-fA-F]{6}$', col, re.IGNORECASE):
+                    out.append(f"{css_id} {{ color: {col}; }}")
+                else:
+                    out.append(f"{css_id} {{ color: @text; }}")
+            out.append("")
+            for mod in all_dock_mods:
+                suffix = mod[7:]
+                css_id = f"{D} #{mod.replace('/', '-')}"
+                if suffix in _HOVER_DEFAULTS:
+                    hcol, hrgb = _HOVER_DEFAULTS[suffix]
+                    out.append(f"{css_id}:hover {{ color: {hcol}; background: rgba({hrgb},0.12); }}")
+                else:
+                    col = self._dock_cfg.get(mod, {}).get("_color", "")
+                    if re.match(r'^#[0-9a-fA-F]{6}$', col, re.IGNORECASE):
+                        h = col.lstrip("#")
+                        r2, g2, b2 = int(h[0:2],16), int(h[2:4],16), int(h[4:6],16)
+                        out.append(f"{css_id}:hover {{ color: {col}; background: rgba({r2},{g2},{b2},0.12); }}")
+            out.append("")
+
+        # ── separators ────────────────────────────────────────────────────────
+        if separators and bar_style in ("islands", "bar"):
+            out.append("/* vswaybar:dock:sep */")
+            out.append(f"{_zone_sels(['modules-left','modules-center','modules-right'], '*')} {{")
+            out.append(f"    border-right: {brd_w}px solid {s0_color};")
+            out.append("}")
+            lc = f"{D} .modules-left > *:last-child,\n{D} .modules-center > *:last-child,\n{D} .modules-right > *:last-child"
+            out.append(f"{lc} {{")
+            out.append("    border-right: none;")
+            out.append("}")
+            out.append("")
+
+        return "\n".join(out)
+
+    def _on_export_zip(self, *_):
+        import zipfile as _zf
+        ts  = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        dlg = Gtk.FileChooserDialog(
+            title="Export as ZIP…", parent=self,
+            action=Gtk.FileChooserAction.SAVE,
+            buttons=("Cancel", Gtk.ResponseType.CANCEL, "Export", Gtk.ResponseType.OK),
+        )
+        dlg.set_current_name(f"waybar-config-{ts}.zip")
+        dlg.set_do_overwrite_confirmation(True)
+        ff = Gtk.FileFilter()
+        ff.set_name("ZIP archives")
+        ff.add_pattern("*.zip")
+        dlg.add_filter(ff)
+
+        if dlg.run() != Gtk.ResponseType.OK:
+            dlg.destroy()
+            return
+        dest = dlg.get_filename()
+        dlg.destroy()
+
+        try:
+            waybar_dir = os.path.dirname(self._config_path)
+            with _zf.ZipFile(dest, "w", _zf.ZIP_DEFLATED) as z:
+                # config
+                if os.path.isfile(self._config_path):
+                    z.write(self._config_path,
+                            os.path.basename(self._config_path))
+                # CSS
+                if os.path.isfile(self._css_path):
+                    z.write(self._css_path, os.path.basename(self._css_path))
+                # scripts/
+                scripts_dir = os.path.join(waybar_dir, "scripts")
+                if os.path.isdir(scripts_dir):
+                    for fn in os.listdir(scripts_dir):
+                        fp = os.path.join(scripts_dir, fn)
+                        if os.path.isfile(fp):
+                            z.write(fp, os.path.join("scripts", fn))
+            self._status(f"✓  Exported → {os.path.basename(dest)}")
+        except Exception as e:
+            self._show_alert("Export failed", str(e), error=True)
 
     def _on_save_as(self, *_):
         dlg = Gtk.FileChooserDialog(
@@ -2035,18 +2701,83 @@ class VsWaybarSettings(Gtk.Window):
             dlg.destroy()
 
     def _on_open(self, *_):
-        dlg = Gtk.FileChooserDialog(
-            title="Open Waybar config", parent=self,
-            action=Gtk.FileChooserAction.OPEN,
-            buttons=("Cancel", Gtk.ResponseType.CANCEL, "Open", Gtk.ResponseType.OK),
+        t = self._theme
+
+        dlg = Gtk.Dialog(title="Open Waybar files", parent=self,
+                         flags=Gtk.DialogFlags.MODAL)
+        dlg.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        ok_btn = dlg.add_button("Load", Gtk.ResponseType.OK)
+        ok_btn.get_style_context().add_class("save-btn")
+        dlg.set_default_size(560, -1)
+
+        content = dlg.get_content_area()
+        content.set_spacing(0)
+
+        grid = Gtk.Grid()
+        grid.set_row_spacing(10)
+        grid.set_column_spacing(12)
+        grid.set_margin_start(20); grid.set_margin_end(20)
+        grid.set_margin_top(20);   grid.set_margin_bottom(20)
+
+        def _make_row(label_text, current_path, row, patterns):
+            lbl = Gtk.Label(label=label_text)
+            lbl.set_halign(Gtk.Align.START)
+            lbl.set_markup(f'<span foreground="{t["dim"]}">{label_text}</span>')
+            grid.attach(lbl, 0, row, 1, 1)
+
+            entry = Gtk.Entry()
+            entry.set_text(current_path)
+            entry.set_hexpand(True)
+            grid.attach(entry, 1, row, 1, 1)
+
+            browse = Gtk.Button(label="Browse…")
+            browse.get_style_context().add_class("open-btn")
+            def _browse(*_, e=entry, p=patterns):
+                fd = Gtk.FileChooserDialog(
+                    title="Select file", parent=dlg,
+                    action=Gtk.FileChooserAction.OPEN,
+                    buttons=("Cancel", Gtk.ResponseType.CANCEL,
+                             "Select", Gtk.ResponseType.OK),
+                )
+                for name, globs in p:
+                    ff = Gtk.FileFilter()
+                    ff.set_name(name)
+                    for g in globs:
+                        ff.add_pattern(g)
+                    fd.add_filter(ff)
+                all_ff = Gtk.FileFilter()
+                all_ff.set_name("All files")
+                all_ff.add_pattern("*")
+                fd.add_filter(all_ff)
+                if os.path.exists(e.get_text()):
+                    fd.set_filename(e.get_text())
+                if fd.run() == Gtk.ResponseType.OK:
+                    e.set_text(fd.get_filename())
+                fd.destroy()
+            browse.connect("clicked", _browse)
+            grid.attach(browse, 2, row, 1, 1)
+            return entry
+
+        cfg_entry = _make_row(
+            "Config (JSON):", self._config_path, 0,
+            [("Waybar config", ["*.json", "*.jsonc", "config"])]
         )
-        ff = Gtk.FileFilter()
-        ff.set_name("JSON configs")
-        ff.add_pattern("*.json")
-        dlg.add_filter(ff)
+        css_entry = _make_row(
+            "Stylesheet (CSS):", self._css_path, 1,
+            [("CSS stylesheets", ["*.css"])]
+        )
+
+        content.pack_start(grid, True, True, 0)
+        dlg.show_all()
+
         if dlg.run() == Gtk.ResponseType.OK:
-            self._config_path = dlg.get_filename()
+            new_cfg = cfg_entry.get_text().strip()
+            new_css = css_entry.get_text().strip()
             dlg.destroy()
+            if new_cfg:
+                self._config_path = new_cfg
+            if new_css:
+                self._css_path = new_css
             self._load_config()
             self._rebuild_ui()
             self._status("✓  Loaded")
@@ -2055,22 +2786,38 @@ class VsWaybarSettings(Gtk.Window):
 
 
     def _backup_configs(self):
-        """Backup current config/css/scripts with a timestamp prefix."""
-        import shutil
-        ts = __import__("datetime").datetime.now().strftime("%Y%m%d_%H%M%S")
-        bk_dir = os.path.join(os.path.dirname(self._config_path), "backups")
-        os.makedirs(bk_dir, exist_ok=True)
+        """Backup current config/css/scripts with a timestamp prefix.
+        On first run, also creates backups/original/ with the untouched files."""
+        ts      = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        bk_dir  = os.path.join(os.path.dirname(self._config_path), "backups")
+        orig_dir = os.path.join(bk_dir, "original")
+        os.makedirs(bk_dir,   exist_ok=True)
+
+        # ── original/ — created once, never overwritten ────────────────────
+        if not os.path.isdir(orig_dir) or not os.listdir(orig_dir):
+            os.makedirs(orig_dir)
+            for src in (self._config_path, self._css_path):
+                if os.path.isfile(src):
+                    shutil.copy2(src, os.path.join(orig_dir, os.path.basename(src)))
+            scripts_dir = os.path.join(os.path.dirname(self._config_path), "scripts")
+            if os.path.isdir(scripts_dir):
+                orig_scripts = os.path.join(orig_dir, "scripts")
+                os.makedirs(orig_scripts, exist_ok=True)
+                for fn in os.listdir(scripts_dir):
+                    src = os.path.join(scripts_dir, fn)
+                    if os.path.isfile(src):
+                        shutil.copy2(src, os.path.join(orig_scripts, fn))
+
+        # ── timestamped backup ─────────────────────────────────────────────
         for src in (self._config_path, self._css_path):
             if os.path.isfile(src):
-                dst = os.path.join(bk_dir, f"{ts}_{os.path.basename(src)}")
-                shutil.copy2(src, dst)
+                shutil.copy2(src, os.path.join(bk_dir, f"{ts}_{os.path.basename(src)}"))
         scripts_dir = os.path.join(os.path.dirname(self._config_path), "scripts")
         if os.path.isdir(scripts_dir):
             for fn in os.listdir(scripts_dir):
                 src = os.path.join(scripts_dir, fn)
                 if os.path.isfile(src):
-                    dst = os.path.join(bk_dir, f"{ts}_{fn}")
-                    shutil.copy2(src, dst)
+                    shutil.copy2(src, os.path.join(bk_dir, f"{ts}_{fn}"))
 
     def _on_preview(self, *_):
         """Write config + CSS to disk, then restart waybar."""
@@ -2079,8 +2826,8 @@ class VsWaybarSettings(Gtk.Window):
             os.makedirs(os.path.dirname(self._config_path), exist_ok=True)
             os.makedirs(os.path.dirname(self._css_path),    exist_ok=True)
             self._backup_configs()
-            cfg_out = self._build_save_config()
-            css_out = self._build_save_css()   # read CSS BEFORE opening for write
+            cfg_out = self._build_save_config()   # list [bar, dock]
+            css_out = self._build_save_css()       # unified CSS
             with open(self._config_path, "w") as f:
                 json.dump(cfg_out, f, indent=4, ensure_ascii=False)
             with open(self._css_path, "w") as f:
@@ -2089,21 +2836,25 @@ class VsWaybarSettings(Gtk.Window):
             self._err(f"No se pudo escribir config:\n{e}")
             return
 
-        # Kill all waybars (Hyprland uses exec-once so it won't restart)
         if self._waybar_proc and self._waybar_proc.poll() is None:
             self._waybar_proc.terminate()
-        subprocess.run(["pkill", "-x", "waybar"],
+        subprocess.run(["pkill", "waybar"],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         GLib.timeout_add(500, self._relaunch_waybar)
         self._status("↺  Reiniciando waybar…")
 
     def _relaunch_waybar(self):
+        cfg = self._build_save_config()   # list — may be empty if both disabled
+        if not cfg:
+            self._status("⏸  Bar + Dock deshabilitados.")
+            return False
         try:
             self._waybar_proc = subprocess.Popen(
                 ["waybar", "-c", self._config_path, "-s", self._css_path],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
-            self._status("✓  Waybar reiniciado")
+            names = [c.get("name", "bar") for c in cfg]
+            self._status(f"✓  Reiniciado: {' + '.join(names)}")
         except Exception as e:
             self._err(f"Error al lanzar waybar:\n{e}")
         return False  # one-shot timer
@@ -2117,19 +2868,100 @@ class VsWaybarSettings(Gtk.Window):
         self._build_ui()
         self._notebook.set_current_page(page)
         self.show_all()
+    def _validate_layout(self):
+        """Warn about unrecognized modules in layout and unknown config blocks."""
+        all_zones = (
+            self._cfg.get("modules-left", []) +
+            self._cfg.get("modules-center", []) +
+            self._cfg.get("modules-right", [])
+        )
+        known = (set(ALL_MODULES) |
+                 {f"custom/{s}" for s in self._cfg.get("_user_modules", [])} |
+                 set(self._cfg.get("_named_instances", [])))
+
+        # Modules in layout that the app doesn't know how to edit
+        uneditable_in_layout = [m for m in all_zones if m not in known]
+
+        # Config blocks preserved verbatim (not editable)
+        unknown = list(self._unknown_blocks.keys())
+
+        msgs = []
+        if uneditable_in_layout:
+            msgs.append(f"layout: {', '.join(uneditable_in_layout)}")
+        if unknown:
+            msgs.append(f"preserved: {', '.join(unknown)}")
+
+        if msgs:
+            count = len(uneditable_in_layout) + len(unknown)
+            self._show_alert(
+                f"⚠  {count} unrecognized module(s) — preserved but not editable here",
+                " · ".join(msgs),
+            )
+
+    def _show_alert(self, title: str, detail: str = "", error: bool = False):
+        """Show a dismissible banner below the preview."""
+        if not hasattr(self, "_alert_bar") or self._alert_bar is None:
+            return
+        bar = self._alert_bar
+
+        # Clear previous content
+        for ch in bar.get_children():
+            bar.remove(ch)
+
+        css_cls = "alert-bar-error" if error else "alert-bar"
+        ctx = bar.get_style_context()
+        ctx.remove_class("alert-bar")
+        ctx.remove_class("alert-bar-error")
+        ctx.add_class(css_cls)
+
+        row = Gtk.Box(spacing=10)
+
+        icon = Gtk.Label()
+        icon.set_markup(f'<span foreground="{"#e05050" if error else "#d4a017"}" size="14000">{"⛔" if error else "⚠"}</span>')
+        row.pack_start(icon, False, False, 0)
+
+        text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+        t_lbl = Gtk.Label()
+        t_lbl.set_markup(f"<b>{title}</b>")
+        t_lbl.set_halign(Gtk.Align.START)
+        text_box.pack_start(t_lbl, False, False, 0)
+        if detail:
+            d_lbl = Gtk.Label(label=detail)
+            d_lbl.set_halign(Gtk.Align.START)
+            d_lbl.set_line_wrap(True)
+            text_box.pack_start(d_lbl, False, False, 0)
+        row.pack_start(text_box, True, True, 0)
+
+        close = Gtk.Button(label="×")
+        close.set_relief(Gtk.ReliefStyle.NONE)
+        def _close(*_):
+            bar.hide()
+            bar.set_no_show_all(True)
+        close.connect("clicked", _close)
+        row.pack_start(close, False, False, 0)
+
+        bar.pack_start(row, True, True, 0)
+        bar.set_no_show_all(False)
+        bar.show_all()
 
     def _build_ui(self):
-        self._w = {"css_colors": {}, "css_hex_entries": {}, "mod_fields": {}}
-        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        inner.pack_start(self._make_header(),      False, False, 0)
-        inner.pack_start(self._make_bar_preview(), False, False, 0)
-        inner.pack_start(self._make_notebook(),    True,  True,  0)
-        inner.pack_start(self._make_statusbar(),   False, False, 0)
-        sw = Gtk.ScrolledWindow()
-        sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        sw.add(inner)
-        self.add(sw)
+        self._w      = {"css_colors": {}, "css_hex_entries": {}, "mod_fields": {}}
+        self._w_dock = {}
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        outer.pack_start(self._make_header(),      False, False, 0)
+        outer.pack_start(self._make_bar_preview(), False, False, 0)
+
+        # Alert banner — hidden by default, shown by _validate_layout / _show_alert
+        self._alert_bar = Gtk.Box(spacing=0)
+        self._alert_bar.set_no_show_all(True)
+        outer.pack_start(self._alert_bar, False, False, 0)
+
+        outer.pack_start(self._make_notebook(),  True,  True,  0)
+        outer.pack_start(self._make_statusbar(), False, False, 0)
+        self.add(outer)
         self._connect_preview_signals()
+        GLib.idle_add(self._refresh_preview)
+        GLib.idle_add(self._validate_layout)
 
     def _make_statusbar(self) -> Gtk.Widget:
         bar = Gtk.Box(spacing=10)
@@ -2147,11 +2979,17 @@ class VsWaybarSettings(Gtk.Window):
     def _make_bar_preview(self) -> Gtk.Widget:
         wrap = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         wrap.get_style_context().add_class("preview-strip")
-        da = Gtk.DrawingArea()
-        da.set_size_request(-1, 120)
-        da.connect("draw", self._draw_bar_preview)
-        self._bar_preview_da = da
-        wrap.pack_start(da, True, True, 0)
+
+        wv = WebKit2.WebView()
+        wv.set_size_request(-1, 160)
+        wv.set_background_color(Gdk.RGBA(0, 0, 0, 0))
+        cfg = wv.get_settings()
+        cfg.set_enable_javascript(True)       # needed for CSS animations
+        cfg.set_enable_developer_extras(False)
+        cfg.set_enable_write_console_messages_to_stdout(False)
+        self._preview_webview = wv
+        wrap.pack_start(wv, True, True, 0)
+
         return wrap
 
     def _make_header(self) -> Gtk.Widget:
@@ -2184,7 +3022,12 @@ class VsWaybarSettings(Gtk.Window):
         saveas_btn.get_style_context().add_class("open-btn")
         saveas_btn.connect("clicked", self._on_save_as)
 
-        for b in (theme_btn, open_btn, saveas_btn, apply_btn):
+        export_btn = Gtk.Button(label="Export…")
+        export_btn.get_style_context().add_class("open-btn")
+        export_btn.set_tooltip_text("Export config + CSS + scripts as .zip")
+        export_btn.connect("clicked", self._on_export_zip)
+
+        for b in (theme_btn, open_btn, export_btn, saveas_btn, apply_btn):
             btn_box.pack_start(b, False, False, 0)
         hdr.pack_start(btn_box, False, False, 0)
         return hdr
@@ -2194,20 +3037,41 @@ class VsWaybarSettings(Gtk.Window):
         nb.set_tab_pos(Gtk.PositionType.LEFT)
         nb.set_show_border(False)
         self._notebook = nb
-        pages = [
-            ("  Bar",        self._page_bar()),
-            ("  Layout",     self._page_layout()),
-            ("  Modules",    self._page_modules()),
-            ("  Styling",    self._page_styling()),
-            ("  Scripts",    self._page_scripts()),
-            ("  Templates",  self._page_templates()),
-            ("  About",      self._page_about()),
+        self._tab_defs = [
+            ("󰕰  Bar",        self._page_bar),
+            ("󰝰  Dock",       self._page_dock),
+            ("󰕮  Layout",     self._page_layout),
+            ("󰒓  Modules",    self._page_modules),
+            ("󰏘  Styling",    self._page_styling),
+            ("󰈮  Scripts",    self._page_scripts),
+            ("󰔎  Templates",  self._page_templates),
+            ("󰆦  vsHub",      self._page_hub),
+            ("󰋽  About",      self._page_about),
         ]
-        for label, page in pages:
+        self._tabs_built = set()
+        self._nb_hub_idx = len(self._tab_defs) - 2  # index of vsHub (before About)
+        for label, _ in self._tab_defs:
+            placeholder = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             lbl = Gtk.Label(label=label)
             lbl.set_xalign(0)
-            nb.append_page(page, lbl)
+            nb.append_page(placeholder, lbl)
+        nb.connect("switch-page", self._on_tab_switch)
+        self._build_tab(0)  # build Bar tab immediately
         return nb
+
+    def _on_tab_switch(self, nb, page, idx):
+        if idx not in self._tabs_built:
+            self._build_tab(idx)
+
+    def _build_tab(self, idx):
+        if idx in self._tabs_built:
+            return
+        self._tabs_built.add(idx)
+        _, builder = self._tab_defs[idx]
+        real_content = builder()
+        placeholder = self._notebook.get_nth_page(idx)
+        placeholder.pack_start(real_content, True, True, 0)
+        placeholder.show_all()
 
     # ── page: Bar ─────────────────────────────────────────────────────────────
 
@@ -2231,6 +3095,7 @@ class VsWaybarSettings(Gtk.Window):
         def _fill_monitors(combo):
             current = combo.get_active_text() or self._cfg.get("output", "")
             combo.remove_all()
+            combo.append_text("Disabled")
             combo.append_text("All monitors")
             try:
                 r = subprocess.run(["hyprctl", "monitors", "-j"],
@@ -2242,8 +3107,11 @@ class VsWaybarSettings(Gtk.Window):
                 combo.append_text(n)
             # restore selection
             matched = False
-            for i, n in enumerate(["All monitors"] + names):
-                if n == current or (not current and n == "All monitors"):
+            _opts = ["Disabled", "All monitors"] + names
+            for i, n in enumerate(_opts):
+                if n == current \
+                        or (current == "__disabled__" and n == "Disabled") \
+                        or (not current and n == "All monitors"):
                     combo.set_active(i)
                     matched = True
                     break
@@ -2380,12 +3248,208 @@ class VsWaybarSettings(Gtk.Window):
 
         return _scrolled(box)
 
+    # ── page: Dock ────────────────────────────────────────────────────────────
+
+    def _page_dock(self) -> Gtk.Widget:
+        cfg = self._dock_cfg
+        w   = self._w_dock
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        box.set_margin_start(28)
+        box.set_margin_end(28)
+        box.set_margin_top(8)
+        box.set_margin_bottom(20)
+
+        box.pack_start(_section("Position"), False, False, 0)
+
+        pos      = _combo(["bottom", "top"], cfg.get("position", "bottom"))
+        w["position"] = pos
+        warn_lbl = _lbl("", "status-hint")
+        warn_lbl.set_margin_start(8)
+
+        def _check_conflict(*_):
+            bar_pos_w = self._w.get("position")
+            bar_pos   = bar_pos_w.get_active_text() if bar_pos_w else self._cfg.get("position", "top")
+            dock_pos  = w["position"].get_active_text() or "bottom"
+            warn_lbl.set_text(f"⚠  misma posición que el bar ({bar_pos})" if bar_pos == dock_pos else "")
+            self._refresh_preview()
+
+        pos.connect("changed", _check_conflict)
+        _check_conflict()
+        pos_row = Gtk.Box(spacing=6)
+        pos_row.pack_start(pos,      False, False, 0)
+        pos_row.pack_start(warn_lbl, False, False, 0)
+        box.pack_start(_row("Position", pos_row), False, False, 0)
+
+        out_combo = Gtk.ComboBoxText()
+        w["output"] = out_combo
+
+        def _fill_dock_monitors(combo):
+            current = combo.get_active_text() or cfg.get("output", "")
+            combo.remove_all()
+            combo.append_text("Disabled")
+            combo.append_text("All monitors")
+            try:
+                r = subprocess.run(["hyprctl", "monitors", "-j"],
+                                   capture_output=True, text=True, timeout=3)
+                names = [m["name"] for m in json.loads(r.stdout)]
+            except Exception:
+                names = []
+            for n in names:
+                combo.append_text(n)
+            matched = False
+            _opts = ["Disabled", "All monitors"] + names
+            for i, n in enumerate(_opts):
+                if n == current \
+                        or (current == "__disabled__" and n == "Disabled") \
+                        or (not current and n == "All monitors"):
+                    combo.set_active(i); matched = True; break
+            if not matched:
+                combo.prepend_text(current); combo.set_active(0)
+
+        _fill_dock_monitors(out_combo)
+        out_combo.connect("changed", self._refresh_preview)
+        ref_btn = Gtk.Button(label="⟳")
+        ref_btn.get_style_context().add_class("open-btn")
+        ref_btn.connect("clicked", lambda *_: _fill_dock_monitors(out_combo))
+        out_row = Gtk.Box(spacing=6)
+        out_row.pack_start(out_combo, False, False, 0)
+        out_row.pack_start(ref_btn,   False, False, 0)
+        box.pack_start(_row("Output (monitor)", out_row), False, False, 0)
+
+        excl = Gtk.Switch()
+        excl.set_active(cfg.get("exclusive", True))
+        excl.set_halign(Gtk.Align.START)
+        w["exclusive"] = excl
+        excl.connect("notify::active", self._refresh_preview)
+        box.pack_start(_row("Exclusive (reserva espacio)", excl), False, False, 0)
+
+        box.pack_start(_section("Dimensions"), False, False, 0)
+
+        height = _spin(cfg.get("height", 54), 20, 100)
+        w["height"] = height
+        height.connect("value-changed", self._refresh_preview)
+        box.pack_start(_row("Altura (px)", height), False, False, 0)
+
+        spacing = _spin(cfg.get("spacing", 6), 0, 20)
+        w["spacing"] = spacing
+        spacing.connect("value-changed", self._refresh_preview)
+        box.pack_start(_row("Module spacing", spacing), False, False, 0)
+
+        box.pack_start(_section("Appearance"), False, False, 0)
+
+        style_combo = _combo(["islands", "bar", "modules"], cfg.get("bar-style", "islands"))
+        w["bar-style"] = style_combo
+        style_combo.connect("changed", self._refresh_preview)
+        box.pack_start(_row("Visual style", style_combo), False, False, 0)
+
+        opacity = _spin(cfg.get("opacity", 90), 10, 100)
+        w["opacity"] = opacity
+        opacity.connect("value-changed", self._refresh_preview)
+        box.pack_start(_row("Opacity (%)", opacity), False, False, 0)
+
+        radius = _spin(cfg.get("zone-radius", 16), 0, 40)
+        w["zone-radius"] = radius
+        radius.connect("value-changed", self._refresh_preview)
+        box.pack_start(_row("Zone radius (px)", radius), False, False, 0)
+
+        border_w = _spin(cfg.get("border-width", 2), 0, 6)
+        w["border-width"] = border_w
+        border_w.connect("value-changed", self._refresh_preview)
+        box.pack_start(_row("Border (px)", border_w), False, False, 0)
+
+        sep_sw = Gtk.Switch()
+        sep_sw.set_active(cfg.get("separators", False))
+        sep_sw.set_halign(Gtk.Align.START)
+        w["separators"] = sep_sw
+        sep_sw.connect("notify::active", self._refresh_preview)
+        box.pack_start(_row("Module separators", sep_sw), False, False, 0)
+
+        current_ff  = cfg.get("font-family", "JetBrainsMono Nerd Font")
+        current_fsz = cfg.get("font-size", 22)
+        fb = Gtk.FontButton()
+        fb.set_font(f"{current_ff} {current_fsz}")
+        fb.set_use_size(True)
+        fb.set_show_size(True)
+        fb.set_halign(Gtk.Align.START)
+        w["font-family"] = fb
+
+        font_sz = _spin(current_fsz, 8, 48)
+        w["font-size"] = font_sz
+        font_sz.connect("value-changed", self._refresh_preview)
+
+        def _on_font_set_dock(btn):
+            desc   = Pango.FontDescription.from_string(btn.get_font_name())
+            family = desc.get_family()
+            if family:
+                self._dock_cfg["font-family"] = family
+            sz = desc.get_size()
+            if sz > 0:
+                px = max(8, min(48, sz // Pango.SCALE))
+                font_sz.set_value(px)
+            self._refresh_preview()
+
+        fb.connect("font-set", _on_font_set_dock)
+        box.pack_start(_row("Font family", fb), False, False, 0)
+        box.pack_start(_row("Font size (px)", font_sz), False, False, 0)
+
+        mod_pad = _spin(cfg.get("mod-padding", 14), 0, 40)
+        w["mod-padding"] = mod_pad
+        mod_pad.connect("value-changed", self._refresh_preview)
+        box.pack_start(_row("Module padding (px)", mod_pad), False, False, 0)
+
+        box.pack_start(_section("Margins"), False, False, 0)
+
+        mt = _spin(cfg.get("margin-top", 0), 0, 60)
+        w["margin-top"] = mt
+        mt.connect("value-changed", self._refresh_preview)
+        box.pack_start(_row("Margin top (px)", mt), False, False, 0)
+
+        mb = _spin(cfg.get("margin-bottom", 8), 0, 60)
+        w["margin-bottom"] = mb
+        mb.connect("value-changed", self._refresh_preview)
+        box.pack_start(_row("Margin bottom (px)", mb), False, False, 0)
+
+        ml = _spin(cfg.get("margin-left", 0), 0, 100)
+        w["margin-left"] = ml
+        ml.connect("value-changed", self._refresh_preview)
+        box.pack_start(_row("Margin left (px)", ml), False, False, 0)
+
+        mr = _spin(cfg.get("margin-right", 0), 0, 100)
+        w["margin-right"] = mr
+        mr.connect("value-changed", self._refresh_preview)
+        box.pack_start(_row("Margin right (px)", mr), False, False, 0)
+
+        sep = Gtk.Separator()
+        sep.set_margin_top(16)
+        sep.set_margin_bottom(8)
+        box.pack_start(sep, False, False, 0)
+
+        def_btn = Gtk.Button(label="↺  Load defaults")
+        def_btn.get_style_context().add_class("open-btn")
+        def_btn.set_tooltip_text("Restore default dock settings")
+        def_btn.connect("clicked", self._load_default_dock)
+        box.pack_start(def_btn, False, False, 0)
+
+        return _scrolled(box)
+
+    def _load_default_dock(self, *_):
+        for k, v in DOCK_DEFAULTS.items():
+            self._dock_cfg[k] = copy.deepcopy(v)
+        self._rebuild_ui()
+        self._status("↺  Default dock settings restored.")
+
     # ── page: Layout ──────────────────────────────────────────────────────────
 
     def _page_layout(self) -> Gtk.Widget:
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
 
-        # Zone editors
+        # ── Bar section ───────────────────────────────────────────────────────
+        bar_hdr = _lbl("Bar", "section-title")
+        bar_hdr.set_margin_start(14)
+        bar_hdr.set_margin_top(8)
+        bar_hdr.set_margin_bottom(2)
+        outer.pack_start(bar_hdr, False, False, 0)
+
         zones_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         zones_box.set_homogeneous(True)
         for zone_key, zone_label in (
@@ -2393,24 +3457,67 @@ class VsWaybarSettings(Gtk.Window):
             ("modules-center", "Center"),
             ("modules-right",  "Right"),
         ):
-            col = self._make_zone_editor(zone_key, zone_label)
+            col = self._make_zone_editor(zone_key, zone_label, self._cfg, self._w)
             zones_box.pack_start(col, True, True, 0)
-
         outer.pack_start(zones_box, True, True, 0)
 
-        foot = Gtk.Box(spacing=0)
+        # ── Dock section ──────────────────────────────────────────────────────
+        sep = Gtk.Separator()
+        sep.set_margin_top(6)
+        outer.pack_start(sep, False, False, 0)
+
+        dock_hdr = _lbl("Dock", "section-title")
+        dock_hdr.set_margin_start(14)
+        dock_hdr.set_margin_top(6)
+        dock_hdr.set_margin_bottom(2)
+        outer.pack_start(dock_hdr, False, False, 0)
+
+        dock_zones_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        dock_zones_box.set_homogeneous(True)
+        for zone_key, zone_label in (
+            ("modules-left",   "Left"),
+            ("modules-center", "Center"),
+            ("modules-right",  "Right"),
+        ):
+            col = self._make_zone_editor(zone_key, zone_label, self._dock_cfg, self._w_dock)
+            dock_zones_box.pack_start(col, True, True, 0)
+        outer.pack_start(dock_zones_box, True, True, 0)
+
+        # ── Footer ────────────────────────────────────────────────────────────
+        foot = Gtk.Box(spacing=8)
         foot.set_margin_start(14)
         foot.set_margin_end(14)
         foot.set_margin_top(6)
         foot.set_margin_bottom(10)
-        def_btn = Gtk.Button(label="↺  Load defaults")
+
+        def_btn = Gtk.Button(label="↺  Bar defaults")
         def_btn.get_style_context().add_class("open-btn")
-        def_btn.set_tooltip_text("Restore the original left / center / right layout")
+        def_btn.set_tooltip_text("Restore the original bar layout")
         def_btn.connect("clicked", self._load_default_layout)
         foot.pack_start(def_btn, False, False, 0)
-        outer.pack_start(foot, False, False, 0)
 
-        return outer
+        dock_def_btn = Gtk.Button(label="↺  Dock defaults")
+        dock_def_btn.get_style_context().add_class("open-btn")
+        dock_def_btn.set_tooltip_text("Restore the default dock layout")
+        dock_def_btn.connect("clicked", self._load_default_dock_layout)
+        foot.pack_start(dock_def_btn, False, False, 0)
+
+        outer.pack_start(foot, False, False, 0)
+        return _scrolled(outer)
+
+    def _load_default_dock_layout(self, *_):
+        self._dock_cfg["modules-left"]   = []
+        self._dock_cfg["modules-center"] = list(DOCK_DEFAULTS.get("modules-center", []))
+        self._dock_cfg["modules-right"]  = []
+        for zone_key in ("modules-left", "modules-center", "modules-right"):
+            store = self._w_dock.get(f"zone_{zone_key}")
+            if store:
+                store.clear()
+                for mod in self._dock_cfg[zone_key]:
+                    icon, name = MODULE_LABELS.get(mod, ("", mod))
+                    store.append([mod, f"{icon}  {name}"])
+        self._refresh_preview()
+        self._status("↺  Default dock layout restored.")
 
     def _draw_zone_preview(self, widget, cr, side):
         """Render a single zone (left or right) at natural scale for detail view."""
@@ -2443,6 +3550,13 @@ class VsWaybarSettings(Gtk.Window):
         for _suf in self._cfg.get("_user_modules", []):
             _hex = self._cfg.get(f"custom/{_suf}", {}).get("_color", "")
             MOD_COLOR[f"custom/{_suf}"] = _hex_to_rgb(_hex) if _hex else sub0
+        # dock modules used in bar zones — use their dock-side _color
+        for _m in (self._cfg.get("modules-left", []) +
+                   self._cfg.get("modules-center", []) +
+                   self._cfg.get("modules-right", [])):
+            if _m.startswith("custom/") and _m in self._dock_cfg:
+                _hex = self._dock_cfg[_m].get("_color", "")
+                MOD_COLOR[_m] = _hex_to_rgb(_hex) if re.match(r'^#[0-9a-fA-F]{6}$', _hex) else sub0
 
         bar_style = self._cfg.get("bar-style",   "islands")
         zone_r    = self._cfg.get("zone-radius",  12)
@@ -2471,7 +3585,7 @@ class VsWaybarSettings(Gtk.Window):
             fd = Pango.FontDescription.from_string(ff)
             fd.set_absolute_size(max(6, font_sz) * Pango.SCALE)
             lo.set_font_description(fd)
-            s = (self._cfg.get("custom/arch", {}).get("arch-icon-glyph", "󰣇") if mod == "custom/arch" else (MOD_SAMPLE.get(mod) or self._cfg.get(mod, {}).get("format") if mod.startswith("custom/") else MOD_SAMPLE.get(mod)))
+            s = (self._cfg.get("custom/arch", {}).get("arch-icon-glyph", "󰣇") if mod == "custom/arch" else (MOD_SAMPLE.get(mod) or self._cfg.get(mod, self._dock_cfg.get(mod, {})).get("format") if mod.startswith("custom/") else MOD_SAMPLE.get(mod)))
             if s is None:
                 icon, name = MODULE_LABELS.get(mod, ("", mod.split("/")[-1]))
                 s = f"{icon} {name}" if icon else name
@@ -2525,7 +3639,7 @@ class VsWaybarSettings(Gtk.Window):
                             " Italic" if mod == "hyprland/window" else ""))
             fd.set_absolute_size((_arch_icon_sz if mod == "custom/arch" else font_sz) * Pango.SCALE)
             lo.set_font_description(fd)
-            s = (self._cfg.get("custom/arch", {}).get("arch-icon-glyph", "󰣇") if mod == "custom/arch" else (MOD_SAMPLE.get(mod) or self._cfg.get(mod, {}).get("format") if mod.startswith("custom/") else MOD_SAMPLE.get(mod)))
+            s = (self._cfg.get("custom/arch", {}).get("arch-icon-glyph", "󰣇") if mod == "custom/arch" else (MOD_SAMPLE.get(mod) or self._cfg.get(mod, self._dock_cfg.get(mod, {})).get("format") if mod.startswith("custom/") else MOD_SAMPLE.get(mod)))
             if s is None:
                 icon, name = MODULE_LABELS.get(mod, ("", mod.split("/")[-1]))
                 s = f"{icon} {name}" if icon else name
@@ -2557,335 +3671,254 @@ class VsWaybarSettings(Gtk.Window):
                 cr.stroke()
                 mx += sp
 
-    def _draw_bar_preview(self, widget, cr):
-        AW = widget.get_allocated_width()
-        AH = widget.get_allocated_height()
-        c  = self._css_colors
+    def _build_preview_html(self) -> str:
+        """Genera HTML con bar + dock para el WebKit2 preview."""
 
-        # ── colors ────────────────────────────────────────────────────────────
-        def _col(name, fb): return _hex_to_rgb(c.get(name, fb))
-        base     = _col("base",     "#11140e")
-        surface0 = _col("surface0", "#1d211a")
-        surface1 = _col("surface1", "#282b24")
-        overlay0 = _col("overlay0", "#33362f")
-        sub0     = _col("subtext0", "#c4c8bb")
-        blue     = _col("blue",     "#abd290")
-        mauve    = _col("mauve",    "#abd290")
-        green    = _col("green",    "#a0cfcf")
-        peach    = _col("peach",    "#1e4e4e")
-        red_c    = _col("red",      "#ffb4ab")
-        text_c   = _col("text",     "#e1e4d9")
+        c    = self._css_colors
+        cfg  = self._cfg
+        dock = self._dock_cfg
+
+        def hx(name, fb="#000000"):
+            return c.get(name, fb)
+
+        def to_rgba(hex_c, a=1.0):
+            h = hex_c.lstrip("#")
+            if len(h) == 6:
+                r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+                return f"rgba({r},{g},{b},{a:.2f})"
+            return hex_c
+
+        base     = hx("base",     "#11140e")
+        text_c   = hx("text",     "#e1e4d9")
+        surface0 = hx("surface0", "#1d211a")
+        blue     = hx("blue",     "#89b4fa")
+        peach    = hx("peach",    "#fab387")
+        green    = hx("green",    "#a6e3a1")
+        mauve    = hx("mauve",    "#cba6f7")
+        red_c    = hx("red",      "#f38ba8")
+        yellow   = hx("yellow",   "#f9e2af")
+        sub0     = hx("subtext0", "#a6adc8")
+
+        bar_style  = cfg.get("bar-style",    "islands")
+        bar_h      = cfg.get("height",         42)
+        bar_pos    = cfg.get("position",       "top")
+        font_sz    = cfg.get("font-size",       13)
+        mod_pad    = cfg.get("mod-padding",      8)
+        zone_r     = cfg.get("zone-radius",     12)
+        opacity    = cfg.get("opacity",         95) / 100
+        brd_w      = cfg.get("border-width",     1)
+        spacing    = cfg.get("spacing",         10)
+        mt         = cfg.get("margin-top",       0)
+        mb_b       = cfg.get("margin-bottom",    0)
+        ml         = cfg.get("margin-left",      0)
+        mr         = cfg.get("margin-right",     0)
+        separators = cfg.get("separators",   False)
+        font_fam   = cfg.get("font-family",  "JetBrainsMono Nerd Font")
+
+        dock_h     = dock.get("height",       54)
+        dock_pos   = dock.get("position",     "bottom")
+        dock_style = dock.get("bar-style",    "islands")
+        dock_sz    = dock.get("font-size",    22)
+        dock_pad   = dock.get("mod-padding",  14)
+        dock_r     = dock.get("zone-radius",  16)
+        dock_op    = dock.get("opacity",      90) / 100
+        dock_brd   = dock.get("border-width",  2)
+        dock_mb    = dock.get("margin-bottom",  8)
+        dock_sep   = dock.get("separators",  False)
+        dock_sp    = dock.get("spacing",       6)
+        dock_fam   = dock.get("font-family",  "JetBrainsMono Nerd Font")
+
+        ws_c = cfg.get("hyprland/workspaces", {})
+        ac1  = ws_c.get("anim-color-1", "#2980b9")
+        ac2  = ws_c.get("anim-color-2", "#420ed2")
+        ws_r = ws_c.get("button-radius",  8)
+        dur  = ws_c.get("anim-duration", 3.0)
+
+        bg_theme = self._theme.get("bg", "#1a1b26")
 
         MOD_COLOR = {
             "custom/arch":         blue,   "hyprland/workspaces": sub0,
             "hyprland/window":     sub0,   "custom/weather":      peach,
             "clock":               blue,   "tray":                sub0,
             "custom/updates":      green,  "pulseaudio":          blue,
-            "network":             green,  "memory":              mauve,
-            "cpu":                 peach,  "battery":             green,
-            "custom/swaync":       text_c, "custom/power":        red_c,
-            "custom/settings":     sub0,
+            "wireplumber":         blue,   "network":             green,
+            "memory":              mauve,  "cpu":                 peach,
+            "battery":             green,  "custom/swaync":       text_c,
+            "custom/power":        red_c,  "custom/settings":     sub0,
+            "temperature":         peach,  "disk":                yellow,
+            "bluetooth":           blue,   "backlight":           yellow,
+            "idle_inhibitor":      sub0,   "mpris":               mauve,
+            "privacy":             sub0,   "wlr/taskbar":         sub0,
         }
-        for _suf in self._cfg.get("_user_modules", []):
-            _hex = self._cfg.get(f"custom/{_suf}", {}).get("_color", "")
-            MOD_COLOR[f"custom/{_suf}"] = _hex_to_rgb(_hex) if _hex else sub0
+        for suf in cfg.get("_user_modules", []):
+            h = cfg.get(f"custom/{suf}", {}).get("_color", "")
+            MOD_COLOR[f"custom/{suf}"] = h if re.match(r'^#[0-9a-fA-F]{6}$', h) else sub0
+        for _m in (cfg.get("modules-left", []) +
+                   cfg.get("modules-center", []) +
+                   cfg.get("modules-right", [])):
+            if _m.startswith("custom/") and _m in dock:
+                h = dock[_m].get("_color", "")
+                if re.match(r'^#[0-9a-fA-F]{6}$', h):
+                    MOD_COLOR[_m] = h
 
-        # ── CSS natural dimensions (px, not pt) ───────────────────────────────
-        ZONE_PV  = 2
-        _ws_c    = self._cfg.get("hyprland/workspaces", {})
-        WS_PH    = int(_ws_c.get("button-pad-h",  14))
-        WS_PV    = int(_ws_c.get("button-pad-v",   4))
-        WS_MINW  = int(_ws_c.get("button-minw",   32))
-        WS_R     = int(_ws_c.get("button-radius",   8))
+        def mod_html(mod, is_dock=False):
+            pad    = dock_pad if is_dock else mod_pad
+            bstyle = dock_style if is_dock else bar_style
+            r      = dock_r if is_dock else zone_r
+            op     = dock_op if is_dock else opacity
 
-        bar_h_nat  = self._cfg.get("height",      36)
-        zone_r_nat = self._cfg.get("zone-radius", 12)
-        spacing    = self._cfg.get("spacing",      4)
-        ml_nat     = self._cfg.get("margin-left",  10)
-        mr_nat     = self._cfg.get("margin-right", 10)
-        position   = self._cfg.get("position",    "top")
-        mt_nat     = self._cfg.get("margin-top",    6)
-        mb_nat     = self._cfg.get("margin-bottom", 0)
-        bar_style  = self._cfg.get("bar-style",   "islands")
-        separators = self._cfg.get("separators",  False)
-        brd_w_nat  = self._cfg.get("border-width", 1)
-        font_sz    = self._cfg.get("font-size",    13)
-        _arch_icon_sz = _parse_arch_icon_sz(self._cfg, font_sz)
-        MOD_PH     = self._cfg.get("mod-padding",  8)
-        ZONE_PH    = MOD_PH
-        # extract first font name from CSS font-family string for Pango
-        _raw_ff    = self._cfg.get("font-family", "Product Sans")
-        _first_ff  = _raw_ff.split(",")[0].strip().strip('"').strip("'")
-
-        # ── scale: fit bar on a 1920px virtual canvas, never enlarge ──────────
-        VW = 1920.0
-        sx = min(AW / VW, 1.0)   # only scale down, never up
-
-        bar_h  = bar_h_nat * sx
-        mt     = mt_nat * sx
-        mb     = mb_nat * sx
-        bar_y  = mt if position != "bottom" else (AH - mb - bar_h)
-
-        # ── background: editor theme ──────────────────────────────────────────
-        cr.set_source_rgb(*_hex_to_rgb(self._theme["bg"]))
-        cr.paint()
-
-        # ── Pango helpers — font sizes in CSS px, scaled by sx ────────────────
-        def _lo(text, css_px=None, bold=False, italic=False):
-            if css_px is None: css_px = font_sz
-            lo = PangoCairo.create_layout(cr)
-            style = ("Bold " if bold else "") + ("Italic" if italic else "")
-            fd = Pango.FontDescription.from_string(
-                f"{_first_ff} {style.strip()}"
-            )
-            fd.set_absolute_size(max(6, int(css_px * sx)) * Pango.SCALE)
-            lo.set_font_description(fd)
-            lo.set_text(text, -1)
-            return lo
-
-        # get_pixel_size() → screen pixels (device units)
-        def _sz(lo): return lo.get_pixel_size()
-
-        # Draw text centered at a natural-coordinate center point
-        def _txt(cx_nat, cy_nat, lo, rgb):
-            tw, th = _sz(lo)
-            cr.set_source_rgb(*rgb)
-            cr.move_to(cx_nat * sx - tw / 2, cy_nat * sx + bar_y - th / 2)
-            PangoCairo.show_layout(cr, lo)
-
-        # Filled rounded rect (natural coords)
-        def _fill(x, y, w, h, r, rgba):
-            cr.set_source_rgba(*rgba)
-            _cr_rounded_rect(cr, x * sx, y * sx + bar_y, w * sx, h * sx, r * sx)
-            cr.fill()
-
-        # Stroked rounded rect (natural coords, 1 device px border)
-        def _stroke(x, y, w, h, r, rgb):
-            cr.set_source_rgb(*rgb)
-            cr.set_line_width(1)
-            o = 0.5
-            _cr_rounded_rect(cr, x*sx + o, y*sx + bar_y + o, w*sx - 1, h*sx - 1, r*sx)
-            cr.stroke()
-
-        # ── workspaces ────────────────────────────────────────────────────────
-        ws_cfg     = self._cfg.get("hyprland/workspaces", {})
-        persistent = ws_cfg.get("persistent-workspaces", {}).get("*", [1, 2, 3, 4, 5])
-        if not isinstance(persistent, list) or not persistent:
-            persistent = [1, 2, 3, 4, 5]
-        ws_active = persistent[len(persistent) // 2]  # middle = active
-
-        # animated active-workspace color (mirrors @keyframes ws-active)
-        _ac1 = _hex_to_rgb(ws_cfg.get("anim-color-1", "#2980b9"))
-        _ac2 = _hex_to_rgb(ws_cfg.get("anim-color-2", "#420ed2"))
-        _pulse = abs(math.sin(self._ws_anim_t * math.pi))
-        ws_act_col = tuple(_ac1[i] * (1 - _pulse) + _ac2[i] * _pulse for i in range(3))
-
-        def _ws_w(n):
-            tw, _ = _sz(_lo(str(n), 14, bold=True))
-            return max(int(WS_MINW * sx), tw + int(WS_PH * 2 * sx))
-
-        ws_widths = [_ws_w(n) for n in persistent]
-        ws_total_px = sum(ws_widths) + int(spacing * sx) * max(0, len(persistent) - 1)
-
-        def _draw_ws(x0_nat):
-            ws_h_px = int((bar_h_nat - WS_PV * 2) * sx)
-            ws_y_px = int(WS_PV * sx) + bar_y
-            wx_px   = x0_nat * sx
-            sp_px   = int(spacing * sx)
-            for i, n in enumerate(persistent):
-                ww = ws_widths[i]
-                act = (n == ws_active)
-                cr.set_source_rgb(*(ws_act_col if act else surface0))
-                _r = min(WS_R * sx, ws_h_px / 2, ww / 2)
-                _cr_rounded_rect(cr, wx_px, ws_y_px, ww, ws_h_px, _r)
-                cr.fill()
-                lo = _lo(str(n), 14, bold=True)
-                tw, th = _sz(lo)
-                cr.set_source_rgb(*(base if act else sub0))
-                cr.move_to(wx_px + (ww - tw) / 2, ws_y_px + (ws_h_px - th) / 2)
-                PangoCairo.show_layout(cr, lo)
-                wx_px += ww + sp_px
-
-        # ── module widths (natural px) → screen px ────────────────────────────
-        _arch_pl = self._cfg.get("custom/arch", {}).get("arch-pad-left",  8)
-        _arch_pr = self._cfg.get("custom/arch", {}).get("arch-pad-right", 8)
-        _arch_col_hex = _parse_arch_icon_color(self._cfg)
-        _arch_col_rgb = _hex_to_rgb(_arch_col_hex) if _arch_col_hex else None
-
-        def _mod_w_px(mod):
             if mod == "hyprland/workspaces":
-                return ws_total_px + int(MOD_PH * 2 * sx)
-            s = (self._cfg.get("custom/arch", {}).get("arch-icon-glyph", "󰣇") if mod == "custom/arch" else (MOD_SAMPLE.get(mod) or self._cfg.get(mod, {}).get("format") if mod.startswith("custom/") else MOD_SAMPLE.get(mod)))
-            if s is None:
-                icon, name = MODULE_LABELS.get(mod, ("", mod.split("/")[-1]))
-                s = f"{icon} {name}" if icon else name
-            cpx    = (_arch_icon_sz if mod == "custom/arch" else font_sz)
-            bold   = (mod == "clock")
-            italic = (mod == "hyprland/window")
-            tw, _  = _sz(_lo(s, cpx, bold=bold, italic=italic))
-            if mod == "custom/arch":
-                return tw + int((_arch_pl + _arch_pr) * sx)
-            return tw + int(MOD_PH * 2 * sx)
+                bubbles = ""
+                for i in range(1, 6):
+                    cls   = "ws-active" if i == 1 else ""
+                    bg_ws = "" if i == 1 else f"background:{surface0};"
+                    bubbles += (
+                        f'<span class="ws-btn {cls}" '
+                        f'style="border-radius:{ws_r}px;{bg_ws}">{i}</span>'
+                    )
+                return (
+                    f'<span class="mod" style="padding:0 {pad}px;'
+                    f'display:inline-flex;align-items:center;gap:3px">'
+                    + bubbles + "</span>"
+                )
 
-        def _zone_w_px(mods):
-            if not mods: return 0
-            sp = int(spacing * sx)
-            return (int(ZONE_PH * 2 * sx)
-                    + sum(_mod_w_px(m) for m in mods)
-                    + sp * max(0, len(mods) - 1))
+            # Para módulos del dock usar el format (glifo) del dock config
+            if is_dock and mod in dock:
+                label = dock[mod].get("format", "") or MOD_SAMPLE.get(mod, mod.split("/")[-1][:4])
+            else:
+                label = MOD_SAMPLE.get(mod, mod.split("/")[-1][:4])
+            color = MOD_COLOR.get(mod, sub0)
+            if is_dock:
+                dc = dock.get(mod, {}).get("_color", "")
+                if re.match(r'^#[0-9a-fA-F]{6}$', dc):
+                    color = dc
 
-        # ── draw zone (positions already in screen px) ────────────────────────
-        def _draw_zone_px(zx_px, mods, pill=True):
-            if not mods: return
-            zw = _zone_w_px(mods)
-            zy = bar_y
-            bh = bar_h
-            r  = zone_r_nat * sx
-            pv = int(ZONE_PV * sx)
-            ph = int(ZONE_PH * sx)
-            sp = int(spacing * sx)
+            h_total = dock_h if is_dock else bar_h
+            extra = ""
+            if bstyle == "modules":
+                h_mod = h_total - 8
+                extra = (
+                    f"background:{to_rgba(base, op)};"
+                    f"border-radius:{r}px;margin:0 2px;"
+                    f"height:{h_mod}px;display:inline-flex;align-items:center;"
+                )
+            return (
+                f'<span class="mod" style="padding:0 {pad}px;'
+                f'color:{color};{extra}">{label}</span>'
+            )
 
-            # Zone container (only in "islas" mode)
-            if pill:
-                cr.set_source_rgba(*base, self._cfg.get("opacity", 95) / 100)
-                _cr_rounded_rect(cr, zx_px, zy, zw, bh, r)
-                cr.fill()
-                cr.set_source_rgb(*surface0)
-                cr.set_line_width(1)
-                _cr_rounded_rect(cr, zx_px + .5, zy + .5, zw - 1, bh - 1, r)
-                cr.stroke()
+        def zone_html(mods, zone_cls, is_dock=False):
+            bstyle = dock_style if is_dock else bar_style
+            r      = dock_r if is_dock else zone_r
+            op     = dock_op if is_dock else opacity
+            bw     = dock_brd if is_dock else brd_w
+            pad    = dock_pad if is_dock else mod_pad
+            sep_on = dock_sep if is_dock else separators
 
-            # Selected highlight
-            mx = zx_px + ph
-            for mod in mods:
-                mw = _mod_w_px(mod)
-                if mod == self._selected_module:
-                    cr.set_source_rgba(*blue, 0.20)
-                    _cr_rounded_rect(cr, mx, zy + pv, mw, bh - pv * 2, 8 * sx)
-                    cr.fill()
-                mx += mw + sp
+            # Altura de la zona basada en la altura de la barra/dock
+            h_total = dock_h if is_dock else bar_h
+            h_zone  = h_total - 4   # margen vertical
+            h_mod   = h_total - 8   # para estilo modules
 
-            # Content
-            mx = zx_px + ph
-            for mod in mods:
-                mw  = _mod_w_px(mod)
-                _is_user = mod.startswith("custom/") and mod[7:] not in _RESERVED_CUSTOM
-                col = MOD_COLOR.get(mod, sub0) if (mod != self._selected_module or _is_user) else blue
+            if bstyle == "islands" and mods:
+                zone_css = (
+                    f"background:{to_rgba(base, op)};"
+                    f"border-radius:{r}px;padding:0 {pad}px;"
+                    f"height:{h_zone}px;"
+                    + (f"border:{bw}px solid {surface0};" if bw > 0 else "")
+                )
+            elif bstyle == "bar":
+                zone_css = f"padding:0 {pad}px;height:100%;"
+            else:
+                zone_css = f"padding:0 {pad}px;"
 
-                if mod == "hyprland/workspaces":
-                    # workspaces draw function starts at mx+MOD_PH (in natural, but we're already in px)
-                    ws_h_px = int((bar_h_nat - WS_PV * 2) * sx)
-                    ws_y_px = int(WS_PV * sx) + bar_y
-                    wx_px   = mx + int(MOD_PH * sx)
-                    sp_px   = int(spacing * sx)
-                    for i, n in enumerate(persistent):
-                        ww = ws_widths[i]
-                        act = (n == ws_active)
-                        cr.set_source_rgb(*(ws_act_col if act else surface0))
-                        _r = min(WS_R * sx, ws_h_px / 2, ww / 2)
-                        _cr_rounded_rect(cr, wx_px, ws_y_px, ww, ws_h_px, _r)
-                        cr.fill()
-                        lo = _lo(str(n), 14, bold=True)
-                        tw, th = _sz(lo)
-                        cr.set_source_rgb(*(base if act else sub0))
-                        cr.move_to(wx_px + (ww - tw) / 2, ws_y_px + (ws_h_px - th) / 2)
-                        PangoCairo.show_layout(cr, lo)
-                        wx_px += ww + sp_px
-                else:
-                    s = (self._cfg.get("custom/arch", {}).get("arch-icon-glyph", "󰣇") if mod == "custom/arch" else (MOD_SAMPLE.get(mod) or self._cfg.get(mod, {}).get("format") if mod.startswith("custom/") else MOD_SAMPLE.get(mod)))
-                    if s is None:
-                        icon, name = MODULE_LABELS.get(mod, ("", mod.split("/")[-1]))
-                        s = f"{icon} {name}" if icon else name
-                    cpx    = (_arch_icon_sz if mod == "custom/arch" else font_sz)
-                    bold   = (mod == "clock")
-                    italic = (mod == "hyprland/window")
-                    lo = _lo(s, cpx, bold=bold, italic=italic)
-                    tw, th = _sz(lo)
-                    if mod == "custom/arch":
-                        draw_col = _arch_col_rgb if _arch_col_rgb else col
-                        tx = mx + int(_arch_pl * sx)
-                    else:
-                        draw_col = col
-                        tx = mx + (mw - tw) / 2
-                    cr.set_source_rgb(*draw_col)
-                    cr.move_to(tx, bar_y + (bar_h - th) / 2)
-                    PangoCairo.show_layout(cr, lo)
+            items = []
+            for i, m in enumerate(mods):
+                items.append(mod_html(m, is_dock))
+                if sep_on and bstyle in ("islands", "bar") and i < len(mods) - 1:
+                    items.append(
+                        f'<span style="border-right:1px solid {surface0};'
+                        f'height:60%;align-self:center;margin:0 1px"></span>'
+                    )
+            return (
+                f'<div class="zone {zone_cls}" style="display:inline-flex;'
+                f'align-items:center;{zone_css}">'
+                + "".join(items) + "</div>"
+            )
 
-                mx += mw + sp
+        # Bar
+        mods_l = cfg.get("modules-left",   [])
+        mods_c = cfg.get("modules-center", [])
+        mods_r = cfg.get("modules-right",  [])
 
-            # Separators (islas / barra only, not after last module)
-            if separators and bar_style in ("islands", "bar") and len(mods) > 1:
-                sep_inset = int(bar_h * 0.2)
-                cr.set_source_rgb(*overlay0)
-                cr.set_line_width(max(1.0, sx))
-                mx = zx_px + ph
-                for mod in mods[:-1]:
-                    mx += _mod_w_px(mod)
-                    sep_x = mx + max(sp, 2) / 2
-                    cr.move_to(sep_x, bar_y + sep_inset)
-                    cr.line_to(sep_x, bar_y + bar_h - sep_inset)
-                    cr.stroke()
-                    mx += sp
+        bar_bg  = to_rgba(base, opacity) if bar_style == "bar" else "transparent"
+        bar_brd = f"{brd_w}px solid {surface0}" if bar_style == "bar" and brd_w > 0 else "none"
+        ff_bar  = font_fam.replace("'", "\\'")
 
-        # ── layout ────────────────────────────────────────────────────────────
-        mods_l = self._cfg.get("modules-left",   [])
-        mods_c = self._cfg.get("modules-center",  [])
-        mods_r = self._cfg.get("modules-right",   [])
-        all_mods = mods_l + mods_c + mods_r
+        # Cada zona ocupa flex:1 para que center quede absolutamente centrado
+        def _wrap_zone(content, justify):
+            return (
+                f'<div style="flex:1;display:flex;align-items:center;'
+                f'justify-content:{justify};">{content}</div>'
+            )
 
-        zw_l = _zone_w_px(mods_l)
-        zw_c = _zone_w_px(mods_c)
-        zw_r = _zone_w_px(mods_r)
+        bar_div = (
+            f'<div id="bar" style="height:{bar_h}px;background:{bar_bg};'
+            f"border:{bar_brd};margin:{mt}px {mr}px {mb_b}px {ml}px;"
+            f"display:flex;align-items:center;"
+            f"font-size:{font_sz}px;"
+            f"font-family:'{ff_bar}',monospace;color:{text_c};"
+            + '">'
+            + _wrap_zone(zone_html(mods_l, "left"),   "flex-start")
+            + _wrap_zone(zone_html(mods_c, "center"), "center")
+            + _wrap_zone(zone_html(mods_r, "right"),  "flex-end")
+            + "</div>"
+        )
 
-        if bar_style == "bar":
-            # Single full-width bar — no zone pills, transparent background zones
-            bar_x = ml_nat * sx
-            bar_w = AW - (ml_nat + mr_nat) * sx
-            cr.set_source_rgba(*base, self._cfg.get("opacity", 95) / 100)
-            _cr_rounded_rect(cr, bar_x, bar_y, bar_w, bar_h, zone_r_nat * sx)
-            cr.fill()
-            cr.set_source_rgb(*surface0)
-            cr.set_line_width(1)
-            _cr_rounded_rect(cr, bar_x + .5, bar_y + .5, bar_w - 1, bar_h - 1, zone_r_nat * sx)
-            cr.stroke()
-            # Draw zones without their own pill containers (pass draw_bg=False)
-            _draw_zone_px(ml_nat * sx,        mods_l,  pill=False)
-            _draw_zone_px((AW - zw_c) / 2,   mods_c,  pill=False)
-            _draw_zone_px(AW - mr_nat*sx - zw_r, mods_r, pill=False)
+        # Dock
+        dock_mods_l = dock.get("modules-left",   [])
+        dock_mods_c = dock.get("modules-center", [])
+        dock_mods_r = dock.get("modules-right",  [])
 
-        elif bar_style == "modules":
-            # Each module is its own individual pill
-            sp = int(spacing * sx)
-            ph = int(ZONE_PH * sx)
-            def _draw_mod_pills(x0_px, mods):
-                mx = x0_px
-                for mod in mods:
-                    mw = _mod_w_px(mod)
-                    cr.set_source_rgba(*base, self._cfg.get("opacity", 95) / 100)
-                    _cr_rounded_rect(cr, mx, bar_y, mw, bar_h, zone_r_nat * sx)
-                    cr.fill()
-                    cr.set_source_rgb(*surface0)
-                    cr.set_line_width(1)
-                    _cr_rounded_rect(cr, mx+.5, bar_y+.5, mw-1, bar_h-1, zone_r_nat*sx)
-                    cr.stroke()
-                    mx += mw + sp
-                return mx
-            total_r = sum(_mod_w_px(m) + sp for m in mods_r) - sp
-            _draw_mod_pills(ml_nat * sx, mods_l)
-            cx = (AW - sum(_mod_w_px(m) + sp for m in mods_c) + sp) / 2
-            _draw_mod_pills(cx, mods_c)
-            _draw_mod_pills(AW - mr_nat * sx - total_r, mods_r)
-            # draw content without pill containers
-            _draw_zone_px(ml_nat * sx,        mods_l,  pill=False)
-            _draw_zone_px((AW - zw_c) / 2,   mods_c,  pill=False)
-            _draw_zone_px(AW - mr_nat*sx - zw_r, mods_r, pill=False)
+        dock_win_bg = to_rgba(base, dock_op) if dock_style == "bar" else "transparent"
+        ff_dock     = dock_fam.replace("'", "\\'")
 
-        else:  # "islands" (default)
-            _draw_zone_px(ml_nat * sx,            mods_l)
-            _draw_zone_px((AW - zw_c) / 2,       mods_c)
-            _draw_zone_px(AW - mr_nat*sx - zw_r,  mods_r)
+        dock_div = (
+            f'<div id="dock" style="height:{dock_h}px;background:{dock_win_bg};'
+            f"display:flex;align-items:center;"
+            f"font-size:{dock_sz}px;"
+            f"font-family:'{ff_dock}',monospace;color:{text_c};"
+            f"margin-bottom:{dock_mb}px;padding:0 8px;"
+            + '">'
+            + _wrap_zone(zone_html(dock_mods_l, "left",   True), "flex-start")
+            + _wrap_zone(zone_html(dock_mods_c, "center", True), "center")
+            + _wrap_zone(zone_html(dock_mods_r, "right",  True), "flex-end")
+            + "</div>"
+        )
 
-    def _make_zone_editor(self, zone_key: str, zone_label: str) -> Gtk.Widget:
+        if bar_pos == "top":
+            layout = bar_div + '<div class="desktop"></div>' + dock_div
+        else:
+            layout = dock_div + '<div class="desktop"></div>' + bar_div
+
+        return (
+            "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\">\n<style>\n"
+            "* { margin:0; padding:0; box-sizing:border-box; }\n"
+            f"html, body {{ width:100%; height:100%; background:{bg_theme};"
+            " overflow:hidden; display:flex; flex-direction:column; }\n"
+            ".desktop { flex:1; }\n"
+            f".ws-btn {{ display:inline-flex; align-items:center; justify-content:center;"
+            f" min-width:20px; height:20px; font-size:10px; color:{text_c}; padding:0 4px; }}\n"
+            f".ws-active {{ animation: ws-pulse {dur:.1f}s ease-in-out infinite; }}\n"
+            f"@keyframes ws-pulse {{ 0%,100% {{ background:{ac1}; }} 50% {{ background:{ac2}; }} }}\n"
+            "</style>\n</head>\n"
+            f"<body>{layout}</body>\n</html>"
+        )
+
+    def _make_zone_editor(self, zone_key: str, zone_label: str,
+                          cfg: dict = None, w_dict: dict = None) -> Gtk.Widget:
+        if cfg    is None: cfg    = self._cfg
+        if w_dict is None: w_dict = self._w
         col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
 
         # Zone header
@@ -2903,15 +3936,26 @@ class VsWaybarSettings(Gtk.Window):
         inner.pack_start(_hint("Drag to reorder"), False, False, 0)
 
         store = Gtk.ListStore(str, str)
-        for mod in self._cfg.get(zone_key, []):
+        for mod in cfg.get(zone_key, []):
             icon, name = MODULE_LABELS.get(mod, ("", mod))
             store.append([mod, f"{icon}  {name}"])
-        self._w[f"zone_{zone_key}"] = store
+        w_dict[f"zone_{zone_key}"] = store
 
         tv = Gtk.TreeView(model=store)
-        tv.set_reorderable(True)
         tv.set_headers_visible(False)
         tv.append_column(Gtk.TreeViewColumn("", Gtk.CellRendererText(), text=1))
+
+        # DnD unificado (dentro y entre zonas) — solo target text/plain
+        # No usar set_reorderable: registra GTK_TREE_MODEL_ROW que toma prioridad
+        # sobre TEXT en la negociación, haciendo que data.get_text() falle cross-zona.
+        _dnd_tgts = [Gtk.TargetEntry.new("text/plain", Gtk.TargetFlags.SAME_APP, 0)]
+        tv.enable_model_drag_source(
+            Gdk.ModifierType.BUTTON1_MASK, _dnd_tgts, Gdk.DragAction.MOVE
+        )
+        tv.enable_model_drag_dest(_dnd_tgts, Gdk.DragAction.MOVE)
+        tv.connect("drag-begin",         self._on_zone_drag_begin,    store)
+        tv.connect("drag-data-get",      self._on_zone_drag_get,      store)
+        tv.connect("drag-data-received", self._on_zone_drag_received, store)
 
         up_btn = Gtk.Button(label="▲")
         up_btn.get_style_context().add_class("open-btn")
@@ -2936,7 +3980,7 @@ class VsWaybarSettings(Gtk.Window):
 
         add_btn = Gtk.Button(label="+ Add")
         add_btn.get_style_context().add_class("open-btn")
-        add_btn.connect("clicked", self._on_zone_add, zone_key, store)
+        add_btn.connect("clicked", self._on_zone_add, zone_key, store, cfg)
 
         rm_btn = Gtk.Button(label="− Remove")
         rm_btn.get_style_context().add_class("open-btn")
@@ -3013,7 +4057,7 @@ class VsWaybarSettings(Gtk.Window):
             }
             store = self._w.get("user_mod_store")
             if store:
-                store.append([f"custom/{suffix}", f"󰘳  {suffix}", False])
+                store.append([f"custom/{suffix}", f"󰘳  {suffix}", False, False])
                 # select the new row so user can edit it immediately
                 tv = self._w.get("module_tv")
                 if tv:
@@ -3033,6 +4077,9 @@ class VsWaybarSettings(Gtk.Window):
             return
         mod_key = model[it][0]
         if not mod_key.startswith("custom/"):
+            return
+        # don't allow removing dock app entries
+        if bool(model[it][3]):
             return
         suffix = mod_key[7:]
         if suffix in _RESERVED_CUSTOM:
@@ -3061,13 +4108,16 @@ class VsWaybarSettings(Gtk.Window):
             ph.set_halign(Gtk.Align.CENTER)
             self._module_panel.pack_start(ph, True, True, 0)
             self._module_panel.show_all()
-        self._selected_module = None
+        self._selected_module          = None
+        self._selected_module_is_dock  = False
         self._refresh_preview()
 
-    def _build_user_module_form(self, mod: str) -> Gtk.Widget:
+    def _build_user_module_form(self, mod: str, source_cfg: dict = None) -> Gtk.Widget:
         """Form for a user-defined custom module (launcher style — like custom/settings)."""
+        if source_cfg is None:
+            source_cfg = self._cfg
         suffix = mod[7:]
-        cfg    = self._cfg.setdefault(mod, {})
+        cfg    = source_cfg.setdefault(mod, {})
         fields = self._w.setdefault("mod_fields", {})
 
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -3075,7 +4125,8 @@ class VsWaybarSettings(Gtk.Window):
         outer.set_margin_top(14);   outer.set_margin_bottom(14)
 
         outer.pack_start(_section(f"custom/{suffix}"), False, False, 0)
-        outer.pack_start(_hint(f"Waybar key: custom/{suffix}"), False, False, 4)
+        ctx = "Dock app" if (source_cfg is not None and source_cfg is not self._cfg) else "Waybar key"
+        outer.pack_start(_hint(f"{ctx}: custom/{suffix}"), False, False, 4)
 
         # ── Glyph picker ──────────────────────────────────────────────────────
         outer.pack_start(_lbl("Icon", "field-label"), False, False, 8)
@@ -3225,7 +4276,78 @@ class VsWaybarSettings(Gtk.Window):
         dlg.destroy()
         return selected[0] if result == Gtk.ResponseType.OK else None
 
-    def _on_zone_add(self, _, zone_key, store):
+    # ── DnD cross-zona ────────────────────────────────────────────────────────
+
+    def _on_zone_drag_begin(self, tv, context, store):
+        """Guarda store origen e ID del módulo arrastrado."""
+        self._dnd_source_store = store
+        _, it = tv.get_selection().get_selected()
+        self._dnd_source_id = store.get_value(it, 0) if it else None
+
+    def _on_zone_drag_get(self, tv, context, data, info, timestamp, store):
+        """Provee el module ID como texto/plain."""
+        if self._dnd_source_id:
+            data.set_text(self._dnd_source_id, -1)
+
+    def _on_zone_drag_received(self, tv, context, x, y, data, info, timestamp, store):
+        """Maneja drop: reorden interno y movimiento cross-zona."""
+        src    = self._dnd_source_store
+        mod_id = data.get_text()
+
+        if not mod_id or src is None:
+            self._dnd_source_store = None
+            self._dnd_source_id    = None
+            Gtk.drag_finish(context, False, False, timestamp)
+            return
+
+        # Etiqueta de display
+        if mod_id in MODULE_LABELS:
+            icon, name = MODULE_LABELS[mod_id]
+        else:
+            glyph = (self._cfg.get(mod_id, {}) or
+                     self._dock_cfg.get(mod_id, {})).get("format", "󰘳")
+            name  = mod_id.split("/")[-1] if "/" in mod_id else mod_id
+            icon  = glyph
+        label = f"{icon}  {name}"
+
+        # Insertar en posición de destino
+        drop_info = tv.get_dest_row_at_pos(x, y)
+        if drop_info:
+            path, pos = drop_info
+            it_tgt = store.get_iter(path)
+            if pos in (Gtk.TreeViewDropPosition.BEFORE,
+                       Gtk.TreeViewDropPosition.INTO_OR_BEFORE):
+                new_it = store.insert_before(it_tgt, [mod_id, label])
+            else:
+                new_it = store.insert_after(it_tgt, [mod_id, label])
+        else:
+            new_it = store.append([mod_id, label])
+
+        # Eliminar de la store origen (la fila que acabamos de insertar
+        # podría ser la misma store; buscar por posición original, no por valor,
+        # para evitar borrar la recién insertada cuando src is store)
+        it_s = src.get_iter_first()
+        found = False
+        while it_s and not found:
+            if src.get_value(it_s, 0) == mod_id:
+                if src is store:
+                    # reorden interno: no borrar la fila recién insertada
+                    if src.get_path(it_s) != src.get_path(new_it):
+                        src.remove(it_s)
+                        found = True
+                        continue
+                else:
+                    src.remove(it_s)
+                    found = True
+                    continue
+            it_s = src.iter_next(it_s)
+
+        self._dnd_source_store = None
+        self._dnd_source_id    = None
+        Gtk.drag_finish(context, True, False, timestamp)
+
+    def _on_zone_add(self, _, zone_key, store, cfg=None):
+        if cfg is None: cfg = self._cfg
         dlg = Gtk.Dialog(title="Add module", parent=self, flags=Gtk.DialogFlags.MODAL)
         dlg.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Add", Gtk.ResponseType.OK)
         content = dlg.get_content_area()
@@ -3233,14 +4355,16 @@ class VsWaybarSettings(Gtk.Window):
         content.set_margin_end(16)
         content.set_margin_top(16)
         content.set_margin_bottom(16)
-        # combine built-in + user modules
-        user_mods = [f"custom/{s}" for s in self._cfg.get("_user_modules", [])]
-        all_mods  = ALL_MODULES + [m for m in user_mods if m not in ALL_MODULES]
+        # combine built-in + user modules + dock apps
+        user_mods  = [f"custom/{s}" for s in self._cfg.get("_user_modules", [])]
+        dock_mods  = [k for k in self._dock_cfg if k.startswith("custom/") and k not in ALL_MODULES]
+        cfg_mods   = [k for k in cfg if k.startswith("custom/") and k not in ALL_MODULES]
+        all_mods   = ALL_MODULES + [m for m in user_mods + dock_mods + cfg_mods if m not in ALL_MODULES]
         def _mod_label(m):
             if m in MODULE_LABELS:
                 return MODULE_LABELS[m]
             suffix = m[7:] if m.startswith("custom/") else m
-            glyph  = self._cfg.get(m, {}).get("format", "󰘳")
+            glyph  = cfg.get(m, self._dock_cfg.get(m, self._cfg.get(m, {}))).get("format", "󰘳")
             return (glyph, suffix)
         sorted_mods = sorted(all_mods, key=lambda m: _mod_label(m)[1].lower())
         combo = _combo(
@@ -3282,29 +4406,47 @@ class VsWaybarSettings(Gtk.Window):
         paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
         paned.set_position(210)
 
-        # Module list — col 0: key, col 1: label, col 2: is_header
+        # Module list — col 0: key, col 1: label, col 2: is_header, col 3: is_dock
         left  = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        store = Gtk.ListStore(str, str, bool)
+        store = Gtk.ListStore(str, str, bool, bool)
 
         native_mods = sorted([m for m in ALL_MODULES if not m.startswith("custom/")],
                              key=lambda m: MODULE_LABELS.get(m, ("", m))[1].lower())
         custom_mods = sorted([m for m in ALL_MODULES if m.startswith("custom/")],
                              key=lambda m: MODULE_LABELS.get(m, ("", m))[1].lower())
 
-        store.append(["", "Waybar modules", True])
+        store.append(["", "Waybar modules", True, False])
         for mod in native_mods:
             icon, name = MODULE_LABELS.get(mod, ("", mod))
-            store.append([mod, f"{icon}  {name}", False])
+            store.append([mod, f"{icon}  {name}", False, False])
 
-        store.append(["", "Custom modules", True])
+        store.append(["", "Custom modules", True, False])
         for mod in custom_mods:
             icon, name = MODULE_LABELS.get(mod, ("", mod))
-            store.append([mod, f"{icon}  {name}", False])
+            store.append([mod, f"{icon}  {name}", False, False])
 
-        store.append(["", "User Commands", True])
+        named = self._cfg.get("_named_instances", [])
+        if named:
+            store.append(["", "Named instances", True, False])
+            for k in named:
+                base = k.split("#")[0]
+                icon, name = MODULE_LABELS.get(base, ("", base))
+                label = f"{icon}  {name}#{k.split('#')[1]}"
+                store.append([k, label, False, False])
+
+        store.append(["", "User Commands", True, False])
         for suffix in self._cfg.get("_user_modules", []):
             glyph = self._cfg.get(f"custom/{suffix}", {}).get("format", "󰘳")
-            store.append([f"custom/{suffix}", f"{glyph}  {suffix}", False])
+            store.append([f"custom/{suffix}", f"{glyph}  {suffix}", False, False])
+        # Dock apps — predefined entries within User Commands
+        seen_dock = set()
+        for zone in ("modules-left", "modules-center", "modules-right"):
+            for mod in self._dock_cfg.get(zone, []):
+                if mod.startswith("custom/") and mod not in seen_dock:
+                    seen_dock.add(mod)
+                    suffix = mod[7:]
+                    glyph  = self._dock_cfg.get(mod, {}).get("format", "󰘳")
+                    store.append([mod, f"{glyph}  {suffix}", False, True])
         self._w["user_mod_store"] = store
 
         tv  = Gtk.TreeView(model=store)
@@ -3368,13 +4510,18 @@ class VsWaybarSettings(Gtk.Window):
             return
         self._collect_module_fields()
         mod_key = model[it][0]
-        self._selected_module = mod_key
+        self._selected_module          = mod_key
+        self._selected_module_is_dock  = bool(model[it][3])
         for child in self._module_panel.get_children():
             self._module_panel.remove(child)
         self._w["mod_fields"] = {}
         suffix = mod_key[7:] if mod_key.startswith("custom/") else ""
         if suffix and suffix not in _RESERVED_CUSTOM:
-            panel = self._build_user_module_form(mod_key)
+            src = self._dock_cfg if self._selected_module_is_dock else self._cfg
+            panel = self._build_user_module_form(mod_key, source_cfg=src)
+        elif "#" in mod_key:
+            # Named instance — show base module form, data stored under full key
+            panel = self._build_module_form(mod_key)
         else:
             panel = self._build_module_form(mod_key)
         self._module_panel.pack_start(panel, True, True, 0)
@@ -3388,10 +4535,29 @@ class VsWaybarSettings(Gtk.Window):
         box.set_margin_top(14)
         box.set_margin_bottom(14)
 
-        icon, name = MODULE_LABELS.get(mod, ("", mod))
-        title = _lbl(f"{icon}  {name}", "module-title")
-        title.set_margin_bottom(14)
-        box.pack_start(title, False, False, 0)
+        base_mod = mod.split("#")[0] if "#" in mod else mod
+        icon, name = MODULE_LABELS.get(base_mod, ("", base_mod))
+        display = f"{icon}  {name}#{mod.split('#')[1]}" if "#" in mod else f"{icon}  {name}"
+
+        hdr_row = Gtk.Box(spacing=8)
+        hdr_row.set_margin_bottom(14)
+        title = _lbl(display, "module-title")
+        hdr_row.pack_start(title, True, True, 0)
+
+        wiki_url = MODULE_WIKI.get(base_mod)
+        if not wiki_url and base_mod.startswith("custom/"):
+            wiki_url = MODULE_WIKI.get("custom/arch")  # generic custom page
+        if wiki_url:
+            docs_btn = Gtk.Button(label="Docs ↗")
+            docs_btn.get_style_context().add_class("open-btn")
+            docs_btn.set_tooltip_text(wiki_url)
+            docs_btn.connect("clicked",
+                lambda *_, u=wiki_url: subprocess.Popen(
+                    ["xdg-open", u],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+            hdr_row.pack_start(docs_btn, False, False, 0)
+
+        box.pack_start(hdr_row, False, False, 0)
 
         cfg    = self._cfg.get(mod, {})
         fields = self._w["mod_fields"]
@@ -4085,7 +5251,6 @@ class VsWaybarSettings(Gtk.Window):
         sw = Gtk.ScrolledWindow()
         sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         sw.add(tv)
-        sw.set_size_request(-1, 340)
         outer.pack_start(sw, True, True, 0)
 
         self._w["script_tv"]   = tv
@@ -4541,8 +5706,8 @@ class VsWaybarSettings(Gtk.Window):
                 os.makedirs(os.path.dirname(self._config_path), exist_ok=True)
                 os.makedirs(os.path.dirname(self._css_path),    exist_ok=True)
                 self._backup_configs()
-                cfg_out = self._build_save_config()
-                css_out = self._build_save_css()
+                cfg_out = self._build_save_config()   # unified array
+                css_out = self._build_save_css()       # unified CSS
                 with open(self._config_path, "w") as f:
                     json.dump(cfg_out, f, indent=4, ensure_ascii=False)
                 with open(self._css_path, "w") as f:
@@ -4552,7 +5717,7 @@ class VsWaybarSettings(Gtk.Window):
                 return
             if self._waybar_proc and self._waybar_proc.poll() is None:
                 self._waybar_proc.terminate()
-            subprocess.run(["pkill", "-x", "waybar"],
+            subprocess.run(["pkill", "waybar"],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             GLib.timeout_add(500, self._relaunch_waybar)
             self._status(f"✓  Template «{name}» — reiniciando waybar…")
@@ -4560,6 +5725,224 @@ class VsWaybarSettings(Gtk.Window):
             self._status(f"👁  Vista previa «{name}» — sin cambios guardados.")
 
     # ── page: About ───────────────────────────────────────────────────────────
+
+    # ── vsHub ─────────────────────────────────────────────────────────────────
+
+    def _reload_tab(self, page_builder, idx, label, keep_position=False):
+        """Rebuild a notebook tab in-place."""
+        self._tabs_built.add(idx)
+        nb = self._notebook
+        was_current = nb.get_current_page() == idx
+        nb.remove_page(idx)
+        new_page = page_builder()
+        lbl = Gtk.Label(label=label)
+        lbl.set_xalign(0)
+        nb.insert_page(new_page, lbl, idx)
+        new_page.show_all()
+        if not keep_position or was_current:
+            nb.set_current_page(idx)
+
+    def _reload_hub_tab(self):
+        self._reload_tab(self._page_hub, self._nb_hub_idx, "󰆦  vsHub", keep_position=True)
+
+    def _page_hub(self) -> Gtk.Widget:
+        t    = self._theme
+        _aur = next((h for h in ("yay", "paru") if shutil.which(h)), None)
+
+        _MANIFEST_URL = "https://raw.githubusercontent.com/victorsosaMx/vsHub/main/tools.json"
+        _CACHE_PATH   = os.path.expanduser("~/.cache/vshub/tools.json")
+        _FALLBACK_TOOLS = [
+            {
+                "name": "vsWaybar Studio", "desc": "Graphical config editor for Waybar",
+                "icon": "󰣇", "exe": "vswaybar-studio", "aur": "vswaybar-studio",
+                "github": "https://github.com/victorsosaMx/vsWaybar-Studio", "self": True,
+            },
+            {
+                "name": "vsHyprland Manager", "desc": "Graphical config editor for Hyprland",
+                "icon": "󱙌", "exe": "vshyprland-manager", "aur": "vshyprland-manager",
+                "github": "https://github.com/victorsosaMx/vsHyprland-Manager",
+            },
+            {
+                "name": "vsFetch", "desc": 'Graphical system info viewer — like "About This Computer" for your Linux desktop',
+                "icon": "", "exe": "vsfetch", "aur": "vsfetch",
+                "github": "https://github.com/victorsosaMx/vsFetch",
+            },
+            {
+                "name": "vsFetch Settings", "desc": "Visual config editor for vsFetch — live preview, themes, no JSON editing",
+                "icon": "󰒓", "exe": "vsfetch-settings", "aur": "vsfetch-settings",
+                "github": "https://github.com/victorsosaMx/vsFetch-Settings",
+            },
+        ]
+
+        def _open_url(url):
+            subprocess.Popen(["xdg-open", url],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        def _load_tools():
+            try:
+                with open(_CACHE_PATH) as f:
+                    return _json.load(f)
+            except Exception:
+                return _FALLBACK_TOOLS
+
+        def _fetch_manifest():
+            """Fetch manifest from GitHub in background; reload tab only if changed."""
+            try:
+                req = urllib.request.Request(
+                    _MANIFEST_URL,
+                    headers={"User-Agent": "vsWaybar-Studio/" + __version__}
+                )
+                with urllib.request.urlopen(req, timeout=5) as r:
+                    data = r.read().decode()
+                remote = _json.loads(data)
+                current = _load_tools()
+                if remote == current:
+                    return
+                os.makedirs(os.path.dirname(_CACHE_PATH), exist_ok=True)
+                with open(_CACHE_PATH, "w") as f:
+                    _json.dump(remote, f, indent=2)
+                GLib.idle_add(self._reload_hub_tab)
+            except Exception:
+                pass
+
+        def _build_cards(tools, container):
+            for tool in tools:
+                is_self      = tool.get("exe", "") == "vswaybar-studio"
+                is_installed = is_self or bool(shutil.which(tool.get("exe", "")))
+
+                card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+                card.set_margin_bottom(10)
+                card.get_style_context().add_class(
+                    "plugin-card-active" if (is_self or is_installed) else "plugin-card"
+                )
+
+                chdr = Gtk.Box(spacing=12)
+                chdr.set_margin_start(14); chdr.set_margin_end(14)
+                chdr.set_margin_top(10);   chdr.set_margin_bottom(10)
+
+                icon_lbl = Gtk.Label()
+                icon_lbl.set_markup(
+                    f'<span font_desc="JetBrainsMono Nerd Font 20" '
+                    f'foreground="{t["acc"] if (is_self or is_installed) else t["dim"]}">'
+                    f'{tool.get("icon", "")}</span>'
+                )
+                chdr.pack_start(icon_lbl, False, False, 0)
+
+                info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                name_lbl = Gtk.Label()
+                name_lbl.set_markup(
+                    f'<span foreground="{t["txt"]}" weight="bold" size="13000">'
+                    f'{tool.get("name", "")}</span>'
+                )
+                name_lbl.set_halign(Gtk.Align.START)
+                desc_lbl = Gtk.Label()
+                desc_lbl.set_markup(
+                    f'<span foreground="{t["dim"]}" size="11000">{tool.get("desc", "")}</span>'
+                )
+                desc_lbl.set_halign(Gtk.Align.START)
+                desc_lbl.set_line_wrap(True)
+                info_box.pack_start(name_lbl, False, False, 0)
+                info_box.pack_start(desc_lbl, False, False, 0)
+                chdr.pack_start(info_box, True, True, 0)
+
+                if is_self:
+                    dot = Gtk.Label()
+                    dot.set_markup(
+                        f'<span foreground="{t["acc"]}">● </span>'
+                        f'<span foreground="{t["dim"]}" size="11000">you are here</span>'
+                    )
+                    chdr.pack_start(dot, False, False, 0)
+                elif is_installed:
+                    dot = Gtk.Label()
+                    dot.set_markup(f'<span foreground="{t["acc"]}">●</span>')
+                    chdr.pack_start(dot, False, False, 4)
+                    launch_btn = Gtk.Button(label="Launch →")
+                    launch_btn.get_style_context().add_class("save-btn")
+                    launch_btn.connect("clicked",
+                        lambda *_, exe=tool.get("exe", ""): subprocess.Popen(
+                            [exe], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+                    chdr.pack_start(launch_btn, False, False, 0)
+                else:
+                    dot = Gtk.Label()
+                    dot.set_markup(f'<span foreground="{t["dim"]}">○</span>')
+                    chdr.pack_start(dot, False, False, 4)
+                    gh_btn = Gtk.Button(label="GitHub")
+                    gh_btn.get_style_context().add_class("open-btn")
+                    gh_btn.connect("clicked",
+                        lambda *_, url=tool.get("github", ""): _open_url(url))
+                    chdr.pack_start(gh_btn, False, False, 0)
+                    if _aur:
+                        inst_btn = Gtk.Button(label=f"Install ({_aur})")
+                        inst_btn.get_style_context().add_class("open-btn")
+                        inst_btn.set_tooltip_text(f"{_aur} -S {tool.get('aur', '')}")
+                        inst_btn.connect("clicked",
+                            lambda *_, pkg=tool.get("aur", ""): subprocess.Popen(
+                                ["kitty", "--class", "floating-terminal",
+                                 "-e", _aur, "-S", pkg],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+                        chdr.pack_start(inst_btn, False, False, 0)
+
+                card.pack_start(chdr, False, False, 0)
+                container.pack_start(card, False, False, 0)
+
+        # ── Build UI ──────────────────────────────────────────────────────────
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        outer.set_margin_start(24); outer.set_margin_end(24)
+        outer.set_margin_top(20);   outer.set_margin_bottom(20)
+
+        hdr_row = Gtk.Box(spacing=12)
+        hdr_row.set_margin_bottom(4)
+        hdr_lbl = Gtk.Label()
+        hdr_lbl.set_markup(
+            f'<span foreground="{t["txt"]}" weight="bold" size="16000">vsHub</span>'
+        )
+        hdr_lbl.set_halign(Gtk.Align.START)
+        hdr_row.pack_start(hdr_lbl, True, True, 0)
+
+        refresh_btn = Gtk.Button(label="⟳")
+        refresh_btn.get_style_context().add_class("open-btn")
+        refresh_btn.set_tooltip_text("Refresh tool list from GitHub")
+        def _force_refresh(*_):
+            try:
+                os.remove(_CACHE_PATH)
+            except Exception:
+                pass
+            threading.Thread(target=_fetch_manifest, daemon=True).start()
+        refresh_btn.connect("clicked", _force_refresh)
+        hdr_row.pack_start(refresh_btn, False, False, 0)
+        outer.pack_start(hdr_row, False, False, 0)
+
+        sub = Gtk.Label()
+        sub.set_markup(
+            f'<span foreground="{t["dim"]}" size="12000">'
+            f'The vs ecosystem — all tools in one place</span>'
+        )
+        sub.set_halign(Gtk.Align.START)
+        sub.set_margin_bottom(20)
+        outer.pack_start(sub, False, False, 0)
+
+        source_lbl = Gtk.Label()
+        try:
+            mtime = datetime.datetime.fromtimestamp(os.path.getmtime(_CACHE_PATH))
+            source_lbl.set_markup(
+                f'<span foreground="{t["dim"]}" size="10000">'
+                f'Updated {mtime.strftime("%Y-%m-%d %H:%M")}</span>'
+            )
+        except OSError:
+            source_lbl.set_markup(
+                f'<span foreground="{t["dim"]}" size="10000">Built-in list · fetching updates…</span>'
+            )
+        source_lbl.set_halign(Gtk.Align.START)
+        source_lbl.set_margin_bottom(12)
+        outer.pack_start(source_lbl, False, False, 0)
+
+        _build_cards(_load_tools(), outer)
+
+        threading.Thread(target=_fetch_manifest, daemon=True).start()
+
+        return _scrolled(outer)
+
+    # ── About ─────────────────────────────────────────────────────────────────
 
     def _page_about(self) -> Gtk.Widget:
         t = self._theme
@@ -4682,17 +6065,11 @@ class VsWaybarSettings(Gtk.Window):
         sw.add(vp)
         return sw
 
-    def _ws_anim_tick(self):
-        # ~3 s cycle at 20 fps (50 ms interval → 60 ticks per 3 s)
-        self._ws_anim_t = (self._ws_anim_t + 1 / 60) % 1.0
-        if self._bar_preview_da:
-            self._bar_preview_da.queue_draw()
-        return True  # keep repeating
-
     def _refresh_preview(self, *_):
         self._collect()
-        if self._bar_preview_da:
-            self._bar_preview_da.queue_draw()
+        if self._preview_webview:
+            html = self._build_preview_html()
+            self._preview_webview.load_html(html, "about:blank")
 
     def _status(self, main: str, hint: str = "", timeout: int = 5000):
         self._status_lbl.set_text(main)
