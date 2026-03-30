@@ -1,4 +1,4 @@
-# vsWaybar Studio
+<h1 align="center">vsWaybar Studio</h1>
 
 <p align="center">
   <img src="vswaybar-studio.png" alt="vsWaybar Studio" width="180"/>
