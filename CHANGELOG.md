@@ -4,6 +4,22 @@ All notable changes to vsWaybar Studio are documented here.
 
 ---
 
+## [1.2.1] — 2026-03-30
+
+### Bug fixes
+
+- **Buttons invisible / indistinguishable** — GTK3 gradients were overriding background colors on all buttons; added `background-image: none; box-shadow: none` globally and introduced a `btn_bg` token in both THEME_DARK and THEME_LIGHT so header, open, and theme-toggle buttons have consistent, readable contrast in both editor modes
+- **Page backgrounds dark in light mode** — `_scrolled()` was using `sw.add(child)` which creates an implicit `GtkViewport` with no CSS class; the implicit viewport inherited the system GTK dark theme background instead of the editor theme; fixed by creating an explicit `Gtk.Viewport` with the `page-scroll` class so all tab pages correctly follow the active editor theme
+- **Alert bar text unreadable** — alert bar used hardcoded colors for the message text; changed to `{t['txt']}` so it follows the active theme
+- **Template card buttons wrong colors** — template cards now attach a per-card `CssProvider` using the template's own palette colors (background, text, accent) so card buttons preview the actual template colors regardless of the active editor theme
+- **Layout zone icons not showing** — zone list labels fell back to the raw module key when the module was not in `MODULE_LABELS`; added `_zone_label()` helper that looks up the `format` field from the module config chain (`cfg → _dock_cfg → _cfg`) and falls back to `󰘳` for unrecognized custom modules
+- **Preview icon "vshy" for new dock modules** — the preview HTML fallback for custom modules without a `format` was slicing the module key (`mod.split("/")[-1][:4]`); changed to the generic `󰘳` glyph so new dock apps show a recognizable placeholder instead of a text fragment
+- **Cannot remove custom modules or dock apps** — `_on_user_mod_remove()` rewritten: Waybar built-ins and reserved custom modules now show a dismissible warning alert instead of silently failing; user-created custom modules are removed from `_user_modules`, `self._cfg`, and all bar zone stores; dock apps are removed from `_dock_cfg` and all dock zone stores
+- **Layout preview not updating after add / remove** — `_on_zone_add()` and `_on_zone_remove()` now call `_refresh_preview()` so the live preview bar reflects zone changes immediately
+- **Tab build errors silent** — `_build_tab()` now wraps the builder call in a try/except and renders an inline error label if a tab fails to build, preventing the rest of the UI from being affected
+
+---
+
 ## [1.2.0] — 2026-03-29
 
 ### Improvements

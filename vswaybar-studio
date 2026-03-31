@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """vsWaybar Studio — graphical config editor for Waybar"""
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 
 import gi
 gi.require_version('Gtk', '3.0')
@@ -1211,6 +1211,7 @@ MODULE_DEFAULTS = {
 THEME_DARK = {
     "bg":      "#1e1e2e",   # base
     "hdr":     "#181825",   # mantle
+    "btn_bg":  "#2a2b3d",   # surface elevado para botones
     "brd":     "#313244",   # surface0
     "txt":     "#cdd6f4",   # text
     "dim":     "#a6adc8",   # subtext0
@@ -1224,6 +1225,7 @@ THEME_DARK = {
 THEME_LIGHT = {
     "bg":      "#eff1f5",   # base
     "hdr":     "#e6e9ef",   # mantle
+    "btn_bg":  "#ffffff",   # superficie elevada para botones
     "brd":     "#ccd0da",   # surface0
     "txt":     "#4c4f69",   # text
     "dim":     "#6c6f85",   # subtext0
@@ -1303,7 +1305,7 @@ entry, spinbutton, spinbutton entry, spinbutton text {{
 }}
 entry:focus, spinbutton:focus {{ border-color: {t['acc']}; }}
 spinbutton button {{
-    background-color: {t['hdr']};
+    background-color: {t['btn_bg']};
     background-image: none;
     color: {t['txt']};
     border: none;
@@ -1313,10 +1315,10 @@ spinbutton button {{
     min-height: 0;
     min-width: 0;
 }}
-spinbutton button:hover {{ color: {t['acc']}; background-color: {t['hdr']}; }}
+spinbutton button:hover {{ color: {t['acc']}; background-color: {t['btn_bg']}; }}
 
 combobox, combobox button, combobox entry {{
-    background-color: {t['hdr']};
+    background-color: {t['btn_bg']};
     background-image: none;
     color: {t['txt']};
     border: 1px solid {t['brd']};
@@ -1327,32 +1329,50 @@ combobox, combobox button, combobox entry {{
 combobox button:hover {{ border-color: {t['acc']}; }}
 
 button {{
-    background-color: {t['hdr']};
+    background-color: {t['btn_bg']};
+    background-image: none;
     color: {t['txt']};
     border: 1px solid {t['brd']};
     border-radius: 5px;
     padding: 5px 14px;
     box-shadow: none;
 }}
-button:hover {{ border-color: {t['acc']}; color: {t['acc']}; }}
+button:hover {{
+    background-color: {t['btn_bg']};
+    background-image: none;
+    border-color: {t['acc']};
+    color: {t['acc']};
+}}
 
 .save-btn {{
     background-color: {t['acc']};
+    background-image: none;
     color: {t['save_fg']};
     border: none;
     border-radius: 6px;
     padding: 6px 22px;
     font-weight: bold;
     font-size: 14px;
+    box-shadow: none;
 }}
-.save-btn:hover {{ background-color: rgba({t['acc_rgb']}, 0.8); }}
+.save-btn:hover {{
+    background-color: rgba({t['acc_rgb']}, 0.8);
+    background-image: none;
+}}
 
 .open-btn {{
-    background-color: transparent;
+    background-color: {t['btn_bg']};
+    background-image: none;
     color: {t['dim']};
     border: 1px solid {t['brd']};
+    box-shadow: none;
 }}
-.open-btn:hover {{ color: {t['acc']}; border-color: {t['acc']}; }}
+.open-btn:hover {{
+    background-color: {t['btn_bg']};
+    background-image: none;
+    color: {t['acc']};
+    border-color: {t['acc']};
+}}
 
 .plugin-card {{
     background-color: {t['hdr']};
@@ -1366,14 +1386,21 @@ button:hover {{ border-color: {t['acc']}; color: {t['acc']}; }}
 }}
 
 .theme-btn {{
-    background-color: transparent;
+    background-color: {t['btn_bg']};
+    background-image: none;
     color: {t['dim']};
     border: 1px solid {t['brd']};
     border-radius: 5px;
     padding: 5px 10px;
     font-size: 13px;
+    box-shadow: none;
 }}
-.theme-btn:hover {{ color: {t['acc']}; border-color: {t['acc']}; }}
+.theme-btn:hover {{
+    background-color: {t['btn_bg']};
+    background-image: none;
+    color: {t['acc']};
+    border-color: {t['acc']};
+}}
 
 switch {{ background-color: {t['brd']}; border-radius: 12px; min-width: 42px; }}
 switch slider {{ background-color: {t['dim']}; border-radius: 10px; }}
@@ -1393,18 +1420,18 @@ textview {{
 separator {{ background-color: {t['brd']}; min-height: 1px; margin: 4px 0; }}
 
 .alert-bar {{
-    background-color: rgba(200, 150, 0, 0.25);
-    border-top: 1px solid rgba(200,150,0,0.6);
-    border-bottom: 1px solid rgba(200,150,0,0.6);
+    background-color: rgba(200, 150, 0, 0.18);
+    border-top: 1px solid rgba(200,150,0,0.5);
+    border-bottom: 1px solid rgba(200,150,0,0.5);
     padding: 6px 12px;
-    color: #1a1a00;
+    color: {t['txt']};
 }}
 .alert-bar-error {{
-    background-color: rgba(200, 50, 50, 0.25);
-    border-top: 1px solid rgba(200,50,50,0.6);
-    border-bottom: 1px solid rgba(200,50,50,0.6);
+    background-color: rgba(200, 50, 50, 0.18);
+    border-top: 1px solid rgba(200,50,50,0.5);
+    border-bottom: 1px solid rgba(200,50,50,0.5);
     padding: 6px 12px;
-    color: #1a0000;
+    color: {t['txt']};
 }}
 
 .status-bar {{
@@ -1425,6 +1452,52 @@ separator {{ background-color: {t['brd']}; min-height: 1px; margin: 4px 0; }}
     background-color: {t['hdr']};
     border-bottom: 1px solid {t['brd']};
     padding: 6px 10px;
+}}
+
+treeview {{
+    background-color: {t['hdr']};
+    color: {t['txt']};
+    border: none;
+}}
+treeview > * {{ background-color: {t['hdr']}; }}
+treeview header button {{
+    background-color: {t['hdr']};
+    color: {t['dim']};
+    border: none;
+    box-shadow: none;
+}}
+treeview row {{ background-color: transparent; color: {t['txt']}; }}
+treeview row:hover {{ background-color: rgba({t['acc_rgb']}, 0.10); }}
+treeview row:selected,
+treeview row:selected:focus,
+treeview row:selected:backdrop {{
+    background-color: {t['acc']};
+    color: {t['save_fg']};
+}}
+
+dialog {{ background-color: {t['bg']}; }}
+dialog > box {{ background-color: {t['bg']}; }}
+.dialog-vbox {{ background-color: {t['bg']}; }}
+
+scrollbar {{ background-color: transparent; }}
+scrollbar trough {{ background-color: {t['hdr']}; min-width: 6px; min-height: 6px; }}
+scrollbar slider {{
+    background-color: {t['brd']};
+    border-radius: 3px;
+    min-width: 6px;
+    min-height: 6px;
+}}
+scrollbar slider:hover {{ background-color: {t['dim']}; }}
+
+flowbox {{ background-color: transparent; }}
+flowboxchild {{ background-color: transparent; padding: 2px; }}
+flowboxchild:hover {{ background-color: rgba({t['acc_rgb']}, 0.10); border-radius: 4px; }}
+flowboxchild:selected {{ background-color: rgba({t['acc_rgb']}, 0.20); border-radius: 4px; }}
+
+paned > separator {{
+    background-color: {t['brd']};
+    min-width: 1px;
+    min-height: 1px;
 }}
 """.encode()
 
@@ -1545,7 +1618,11 @@ def _scrolled(child: Gtk.Widget, hpol=Gtk.PolicyType.NEVER) -> Gtk.ScrolledWindo
     sw = Gtk.ScrolledWindow()
     sw.set_policy(hpol, Gtk.PolicyType.AUTOMATIC)
     sw.get_style_context().add_class("page-scroll")
-    sw.add(child)
+    vp = Gtk.Viewport()
+    vp.set_shadow_type(Gtk.ShadowType.NONE)
+    vp.get_style_context().add_class("page-scroll")
+    vp.add(child)
+    sw.add(vp)
     return sw
 
 def _row(label: str, widget: Gtk.Widget) -> Gtk.Box:
@@ -2128,9 +2205,15 @@ class VsWaybarSettings(Gtk.Window):
                 mod_cfg = dict(self._cfg[k])
                 out[k] = mod_cfg
         # user-defined custom modules (launcher style — only relevant keys)
+        # only write to bar dict if the module is actually used in bar zones
+        _bar_zone_mods = set(
+            self._cfg.get("modules-left", []) +
+            self._cfg.get("modules-center", []) +
+            self._cfg.get("modules-right", [])
+        )
         for suffix in self._cfg.get("_user_modules", []):
             key = f"custom/{suffix}"
-            if key in self._cfg:
+            if key in self._cfg and key in _bar_zone_mods:
                 mc = self._cfg[key]
                 entry = {"format": mc.get("format", "󰘳"), "tooltip": False}
                 oc = mc.get("on-click", "").strip()
@@ -2179,8 +2262,15 @@ class VsWaybarSettings(Gtk.Window):
             dock[zone] = self._dock_cfg.get(zone, [])
         all_dock_mods = dock["modules-left"] + dock["modules-center"] + dock["modules-right"]
         for mod in all_dock_mods:
-            if mod.startswith("custom/") and mod in self._dock_cfg:
-                mc    = self._dock_cfg[mod]
+            if mod.startswith("custom/"):
+                # prefer dock_cfg definition, fall back to bar cfg
+                # (modules created via "+" in Modules tab are stored in self._cfg)
+                if mod in self._dock_cfg:
+                    mc = self._dock_cfg[mod]
+                elif mod in self._cfg:
+                    mc = self._cfg[mod]
+                else:
+                    continue
                 entry = {"format": mc.get("format", "󰘳"), "tooltip": False}
                 oc    = mc.get("on-click", "").strip()
                 if oc:
@@ -3068,7 +3158,19 @@ class VsWaybarSettings(Gtk.Window):
             return
         self._tabs_built.add(idx)
         _, builder = self._tab_defs[idx]
-        real_content = builder()
+        try:
+            real_content = builder()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            err_lbl = _lbl(f"Error building tab: {e}", "hint-label")
+            err_lbl.set_line_wrap(True)
+            err_lbl.set_valign(Gtk.Align.CENTER)
+            err_lbl.set_halign(Gtk.Align.CENTER)
+            placeholder = self._notebook.get_nth_page(idx)
+            placeholder.pack_start(err_lbl, True, True, 0)
+            placeholder.show_all()
+            return
         placeholder = self._notebook.get_nth_page(idx)
         placeholder.pack_start(real_content, True, True, 0)
         placeholder.show_all()
@@ -3442,6 +3544,7 @@ class VsWaybarSettings(Gtk.Window):
 
     def _page_layout(self) -> Gtk.Widget:
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        outer.get_style_context().add_class("page-scroll")
 
         # ── Bar section ───────────────────────────────────────────────────────
         bar_hdr = _lbl("Bar", "section-title")
@@ -3783,10 +3886,11 @@ class VsWaybarSettings(Gtk.Window):
                 )
 
             # Para módulos del dock usar el format (glifo) del dock config
+            _custom_fb = "󰘳" if mod.startswith("custom/") else mod.split("/")[-1][:4]
             if is_dock and mod in dock:
-                label = dock[mod].get("format", "") or MOD_SAMPLE.get(mod, mod.split("/")[-1][:4])
+                label = dock[mod].get("format", "") or MOD_SAMPLE.get(mod, _custom_fb)
             else:
-                label = MOD_SAMPLE.get(mod, mod.split("/")[-1][:4])
+                label = MOD_SAMPLE.get(mod, _custom_fb)
             color = MOD_COLOR.get(mod, sub0)
             if is_dock:
                 dc = dock.get(mod, {}).get("_color", "")
@@ -3935,9 +4039,18 @@ class VsWaybarSettings(Gtk.Window):
 
         inner.pack_start(_hint("Drag to reorder"), False, False, 0)
 
+        def _zone_label(mod):
+            if mod in MODULE_LABELS:
+                return MODULE_LABELS[mod]
+            glyph = (cfg.get(mod, {}) or
+                     self._dock_cfg.get(mod, {}) or
+                     self._cfg.get(mod, {})).get("format", "")
+            name  = mod.split("/")[-1] if "/" in mod else mod
+            return (glyph or "󰘳", name)
+
         store = Gtk.ListStore(str, str)
         for mod in cfg.get(zone_key, []):
-            icon, name = MODULE_LABELS.get(mod, ("", mod))
+            icon, name = _zone_label(mod)
             store.append([mod, f"{icon}  {name}"])
         w_dict[f"zone_{zone_key}"] = store
 
@@ -4074,17 +4187,58 @@ class VsWaybarSettings(Gtk.Window):
             return
         model, it = tv.get_selection().get_selected()
         if not it:
+            self._show_alert("No module selected", "Select a module from the list first.")
             return
-        mod_key = model[it][0]
+        mod_key    = model[it][0]
+        is_dock_app = bool(model[it][3])
+
+        # Waybar built-in modules — cannot remove
         if not mod_key.startswith("custom/"):
+            self._show_alert(
+                "Cannot remove built-in module",
+                f'"{mod_key}" is a Waybar built-in module. Remove it from Layout instead.')
             return
-        # don't allow removing dock app entries
-        if bool(model[it][3]):
-            return
+
         suffix = mod_key[7:]
+
+        # Reserved custom modules — cannot remove
         if suffix in _RESERVED_CUSTOM:
+            self._show_alert(
+                "Cannot remove built-in module",
+                f"custom/{suffix} is a built-in custom module. Remove it from Layout if you don't need it.")
             return
-        self._cfg.get("_user_modules", []).remove(suffix)
+
+        # ── Dock app ──────────────────────────────────────────────────────────
+        if is_dock_app:
+            self._dock_cfg.pop(mod_key, None)
+            for zone in ("modules-left", "modules-center", "modules-right"):
+                lst = self._dock_cfg.get(zone, [])
+                if mod_key in lst:
+                    lst.remove(mod_key)
+                zone_store = self._w_dock.get(f"zone_{zone}")
+                if zone_store:
+                    for row in list(zone_store):
+                        if row[0] == mod_key:
+                            zone_store.remove(row.iter)
+                            break
+            model.remove(it)
+            if self._module_panel:
+                for child in self._module_panel.get_children():
+                    self._module_panel.remove(child)
+                ph = _lbl("← Select a module", "hint-label")
+                ph.set_valign(Gtk.Align.CENTER)
+                ph.set_halign(Gtk.Align.CENTER)
+                self._module_panel.pack_start(ph, True, True, 0)
+                self._module_panel.show_all()
+            self._selected_module         = None
+            self._selected_module_is_dock = False
+            self._refresh_preview()
+            return
+
+        # ── User command (bar) ────────────────────────────────────────────────
+        user_mods = self._cfg.get("_user_modules", [])
+        if suffix in user_mods:
+            user_mods.remove(suffix)
         self._cfg.pop(mod_key, None)
         # remove from all zone lists (cfg + layout widgets)
         for zone in ("modules-left", "modules-center", "modules-right"):
@@ -4378,6 +4532,7 @@ class VsWaybarSettings(Gtk.Window):
             mod  = sorted_mods[idx]
             icon, name = _mod_label(mod)
             store.append([mod, f"{icon}  {name}"])
+            self._refresh_preview()
         dlg.destroy()
 
     def _on_zone_remove(self, _, tv):
@@ -4385,6 +4540,7 @@ class VsWaybarSettings(Gtk.Window):
         model, it = sel.get_selected()
         if it:
             model.remove(it)
+            self._refresh_preview()
 
     def _on_zone_move(self, _, tv, direction):
         sel = tv.get_selection()
@@ -4405,9 +4561,11 @@ class VsWaybarSettings(Gtk.Window):
     def _page_modules(self) -> Gtk.Widget:
         paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
         paned.set_position(210)
+        paned.get_style_context().add_class("page-scroll")
 
         # Module list — col 0: key, col 1: label, col 2: is_header, col 3: is_dock
         left  = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        left.get_style_context().add_class("page-scroll")
         store = Gtk.ListStore(str, str, bool, bool)
 
         native_mods = sorted([m for m in ALL_MODULES if not m.startswith("custom/")],
@@ -4497,6 +4655,7 @@ class VsWaybarSettings(Gtk.Window):
 
         # Module config panel
         self._module_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self._module_panel.get_style_context().add_class("page-scroll")
         ph = _lbl("← Select a module", "hint-label")
         ph.set_valign(Gtk.Align.CENTER)
         ph.set_halign(Gtk.Align.CENTER)
@@ -5220,6 +5379,7 @@ class VsWaybarSettings(Gtk.Window):
 
     def _page_scripts(self) -> Gtk.Widget:
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        outer.get_style_context().add_class("page-scroll")
         outer.set_margin_start(20)
         outer.set_margin_end(20)
         outer.set_margin_top(14)
@@ -5250,6 +5410,7 @@ class VsWaybarSettings(Gtk.Window):
 
         sw = Gtk.ScrolledWindow()
         sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        sw.get_style_context().add_class("page-scroll")
         sw.add(tv)
         outer.pack_start(sw, True, True, 0)
 
@@ -5636,11 +5797,23 @@ class VsWaybarSettings(Gtk.Window):
             btn_row.set_margin_top(4)
 
             prev_btn = Gtk.Button(label="Vista previa")
-            prev_btn.get_style_context().add_class("btn-secondary")
+            _prev_p = Gtk.CssProvider()
+            _prev_p.load_from_data((
+                f"button {{ background-color: {c_surf}; background-image: none;"
+                f" color: {c_text}; border: 1px solid {c_surf}; box-shadow: none; }}"
+                f"button:hover {{ background-color: {c_acc1}; color: {c_base}; border-color: {c_acc1}; }}"
+            ).encode())
+            prev_btn.get_style_context().add_provider(_prev_p, Gtk.STYLE_PROVIDER_PRIORITY_USER)
             prev_btn.connect("clicked", lambda _, _t=tpl, _n=name: self._load_template(_t, _n, apply=False))
 
             apply_btn = Gtk.Button(label="Aplicar")
-            apply_btn.get_style_context().add_class("btn-save")
+            _apply_p = Gtk.CssProvider()
+            _apply_p.load_from_data((
+                f"button {{ background-color: {c_acc2}; background-image: none;"
+                f" color: {c_base}; border: none; box-shadow: none; font-weight: bold; }}"
+                f"button:hover {{ background-color: {c_acc1}; }}"
+            ).encode())
+            apply_btn.get_style_context().add_provider(_apply_p, Gtk.STYLE_PROVIDER_PRIORITY_USER)
             apply_btn.connect("clicked", lambda _, _t=tpl, _n=name: self._load_template(_t, _n, apply=True))
 
             btn_row.pack_start(prev_btn,  True, True, 0)
@@ -5658,12 +5831,8 @@ class VsWaybarSettings(Gtk.Window):
 
             flow.add(card)
 
-        sw = Gtk.ScrolledWindow()
-        sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        sw.add(outer)
-
         outer.pack_start(flow, False, False, 0)
-        return sw
+        return _scrolled(outer)
 
     def _load_template(self, tpl: dict, name: str, apply: bool):
         css = tpl["css"]
