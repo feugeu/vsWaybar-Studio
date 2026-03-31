@@ -4,6 +4,14 @@ All notable changes to vsWaybar Studio are documented here.
 
 ---
 
+## [1.2.2] — 2026-03-31
+
+### Bug fixes
+
+- **`Gtk.FontButton.get_font_name()` deprecation warning** — replaced all 4 call sites with `get_font()`, the non-deprecated equivalent; eliminates the `DeprecationWarning` printed to stderr on GTK 3.22+
+
+---
+
 ## [1.2.1] — 2026-03-30
 
 ### Bug fixes

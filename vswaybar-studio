@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """vsWaybar Studio — graphical config editor for Waybar"""
 
-__version__ = "1.2.1"
+__version__ = "1.2.2"
 
 import gi
 gi.require_version('Gtk', '3.0')
@@ -2066,7 +2066,7 @@ class VsWaybarSettings(Gtk.Window):
             else:
                 self._cfg["output"] = val.strip()
         if "font-family" in w:
-            v = w["font-family"].get_font_name().strip()
+            v = w["font-family"].get_font().strip()
             if v:
                 # use Pango to extract family only (strips size, style, weight)
                 family = Pango.FontDescription.from_string(v).get_family()
@@ -2105,7 +2105,7 @@ class VsWaybarSettings(Gtk.Window):
             else:
                 self._dock_cfg["output"] = val.strip()
         if "font-family" in w:
-            v = w["font-family"].get_font_name().strip()
+            v = w["font-family"].get_font().strip()
             if v:
                 family = Pango.FontDescription.from_string(v).get_family()
                 if family:
@@ -3291,7 +3291,7 @@ class VsWaybarSettings(Gtk.Window):
         font_sz.connect("value-changed", self._refresh_preview)
 
         def _on_font_set(btn):
-            desc   = Pango.FontDescription.from_string(btn.get_font_name())
+            desc   = Pango.FontDescription.from_string(btn.get_font())
             family = desc.get_family()
             if family:
                 self._cfg["font-family"] = family
@@ -3480,7 +3480,7 @@ class VsWaybarSettings(Gtk.Window):
         font_sz.connect("value-changed", self._refresh_preview)
 
         def _on_font_set_dock(btn):
-            desc   = Pango.FontDescription.from_string(btn.get_font_name())
+            desc   = Pango.FontDescription.from_string(btn.get_font())
             family = desc.get_family()
             if family:
                 self._dock_cfg["font-family"] = family
