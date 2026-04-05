@@ -4,6 +4,33 @@ All notable changes to vsWaybar Studio are documented here.
 
 ---
 
+## [1.3.0] — 2026-04-04
+
+### New features
+
+- **Custom module — GTK popup menu mode** — user modules in User Commands now have a mode selector: **Launcher** (previous behaviour: icon + on-click) or **Menu** (new). In Menu mode the form shows a visual item editor with Label / Command columns, `+ Item`, `─ Sep`, `↑`, `↓` and `✕` buttons, and an inline edit panel with auto-generated IDs from the label. On apply, the GtkBuilder XML is generated and written automatically to the configured path (`~/.config/waybar/{name}_menu.xml`). The saved `config.jsonc` includes `menu`, `menu-file` and `menu-actions` instead of `on-click`. The mode is persisted in config so it is restored correctly when the editor is reopened.
+
+- **Workspaces — persistent workspaces option** — the `hyprland/workspaces` module form now includes an "Enable persistent" switch and an editable JSON field to define which workspaces should always be shown (e.g. `{"*": [1, 2, 3, 4, 5]}`). When the switch is off, `persistent-workspaces` is omitted entirely from the saved JSON (dynamic behaviour). The JSON field is visually disabled when the switch is off.
+
+- **`group/` module support** — Waybar groups are now loaded, edited and saved correctly. The Modules tab shows a "Groups" section (always visible) with a `+ Group` button; the form lets the user define orientation, drawer settings (transition-duration, children-class, direction) and the member module list via a ComboBox populated with all available modules. Groups can be added to any Layout zone (bar and dock). Member modules that only exist inside a group receive their own config block in the saved JSON. Dock groups are loaded correctly from `config.jsonc[1]`.
+
+- **`cffi/` module support** — CFFI modules (third-party dynamic libraries `.so`) are now loaded, edited and saved correctly. The Modules tab shows a "CFFI Modules" section with a `+ CFFI` button; the form provides a `module_path` field and a free-form JSON editor for any extra keys the library requires. CFFI modules can be added to any Layout zone (bar and dock) and are cleaned from the layout when removed.
+
+### Improvements
+
+- **GtkBuilder XML generation** — `_build_menu_xml()` helper generates clean, indented XML compatible with Waybar; `_parse_menu_xml()` loads existing XMLs and cross-references IDs with `menu-actions` to restore commands when the editor is reopened.
+- **`justify` field on all modules** — every module form now includes a "Text align" selector (`— / left / center / right`) at the bottom. When the value is empty it is not written to JSON; when set it is serialized as `"justify": "left"` etc.
+
+### Bug fixes
+
+- **Dock groups not loading** — `_load_config` only scanned the bar dict (`config[0]`) for `group/` keys; it now also scans the dock dict (`config[1]`) and merges found groups into the shared `self._groups` registry.
+- **Groups not written to dock dict on save** — `_build_save_config` now writes the group block and its member module config blocks to the dock dict when the group is referenced in a dock zone.
+- **Removing a group did not clean the Layout** — deleting a `group/` from the Modules tab now removes it from bar and dock zones in both `self._cfg`/`self._dock_cfg` and the Layout ListStores.
+- **Removing a custom module did not clean all zones** — dock apps were only removed from dock zones and user commands only from bar zones; any custom module is now removed from all zones in both bars on delete.
+- **False "unrecognized modules" warning** — `_validate_layout` did not include `group/` or `cffi/` in the known-modules set; groups and CFFI modules loaded from config incorrectly triggered the warning banner even though the editor handles them correctly.
+
+---
+
 ## [1.2.2] — 2026-03-31
 
 ### Bug fixes

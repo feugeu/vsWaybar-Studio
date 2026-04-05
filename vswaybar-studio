@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """vsWaybar Studio — graphical config editor for Waybar"""
 
-__version__ = "1.2.2"
+__version__ = "1.3.0"
 
 import gi
 gi.require_version('Gtk', '3.0')
@@ -12,7 +12,7 @@ except ValueError:
     gi.require_version('WebKit2', '4.0')
 from gi.repository import Gtk, Gdk, GLib, Pango, PangoCairo, WebKit2
 import json, os, copy, subprocess, re, math, colorsys, random, shutil, datetime, locale
-import threading, urllib.request
+import threading, urllib.request, xml.etree.ElementTree as _ET
 _json = json
 
 # ── JSONC parser ───────────────────────────────────────────────────────────────
@@ -1692,6 +1692,70 @@ def _hsv_to_hex(h: float, s: float, v: float) -> str:
     r, g, b = colorsys.hsv_to_rgb(h % 1.0, max(0.0, min(1.0, s)), max(0.0, min(1.0, v)))
     return "#{:02x}{:02x}{:02x}".format(int(r * 255), int(g * 255), int(b * 255))
 
+# ── GTK menu XML helpers ──────────────────────────────────────────────────────
+
+def _build_menu_xml(rows: list) -> str:
+    """Generate GtkBuilder XML from a flat list of menu rows.
+
+    Each row is a tuple: (type, label, id, command)
+    type: 'item' | 'separator'
+    """
+    lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<interface>',
+        '    <object class="GtkMenu" id="menu">',
+    ]
+    for rtype, label, rid, _cmd in rows:
+        if rtype == "separator":
+            lines.append('        <child>')
+            lines.append(f'            <object class="GtkSeparatorMenuItem" id="{rid}" />')
+            lines.append('        </child>')
+        elif rtype == "item":
+            lines.append('        <child>')
+            lines.append(f'            <object class="GtkMenuItem" id="{rid}">')
+            lines.append(f'                <property name="label">{label}</property>')
+            lines.append('            </object>')
+            lines.append('        </child>')
+    lines.append('    </object>')
+    lines.append('</interface>')
+    return '\n'.join(lines)
+
+
+def _parse_menu_xml(path: str, actions: dict) -> list:
+    """Parse a GtkBuilder XML file into a flat list of menu rows.
+
+    Returns list of tuples: (type, label, id, command)
+    type: 'item' | 'separator'
+    """
+    rows = []
+    try:
+        tree = _ET.parse(os.path.expanduser(path))
+        root = tree.getroot()
+        menu_obj = root.find('./object[@id="menu"]')
+        if menu_obj is None:
+            return rows
+        for child in menu_obj:
+            obj = child.find('object')
+            if obj is None:
+                continue
+            cls = obj.get('class', '')
+            oid = obj.get('id', '')
+            if cls == 'GtkSeparatorMenuItem':
+                rows.append(('separator', '─ separator ─', oid, ''))
+            elif cls == 'GtkMenuItem':
+                lbl_prop = obj.find('property[@name="label"]')
+                label = lbl_prop.text if lbl_prop is not None else oid
+                rows.append(('item', label, oid, actions.get(oid, '')))
+    except Exception:
+        pass
+    return rows
+
+
+def _label_to_id(label: str) -> str:
+    """Convert a label string to a valid XML id (lowercase, spaces→underscores)."""
+    return re.sub(r'[^a-z0-9_]', '', label.lower().replace(' ', '_')) or 'item'
+
+
 # ── main window ───────────────────────────────────────────────────────────────
 
 class VsWaybarSettings(Gtk.Window):
@@ -1770,6 +1834,8 @@ class VsWaybarSettings(Gtk.Window):
         self._cfg = copy.deepcopy(DEFAULTS)
         self._cfg["_user_modules"] = []
         self._unknown_blocks = {}   # config blocks the app can't edit — preserved verbatim
+        self._groups = {}           # group/name → {orientation, drawer, modules}
+        self._cffi_modules = {}     # cffi/name  → {module_path, ...extra}
         _dock_raw = None
         try:
             with open(self._config_path) as f:
@@ -1813,6 +1879,24 @@ class VsWaybarSettings(Gtk.Window):
                         self._cfg["_named_instances"].append(k)
             # strip deprecated/removed keys
             self._cfg.get("clock", {}).pop("format-alt", None)
+            # detect group/ modules (bar + dock share the same group registry)
+            self._groups = {}
+            for k, v in user.items():
+                if k.startswith("group/") and isinstance(v, dict):
+                    self._groups[k] = copy.deepcopy(v)
+            if _dock_raw:
+                for k, v in _dock_raw.items():
+                    if k.startswith("group/") and isinstance(v, dict) and k not in self._groups:
+                        self._groups[k] = copy.deepcopy(v)
+            # detect cffi/ modules (bar + dock share the same registry)
+            self._cffi_modules = {}
+            for k, v in user.items():
+                if k.startswith("cffi/") and isinstance(v, dict):
+                    self._cffi_modules[k] = copy.deepcopy(v)
+            if _dock_raw:
+                for k, v in _dock_raw.items():
+                    if k.startswith("cffi/") and isinstance(v, dict) and k not in self._cffi_modules:
+                        self._cffi_modules[k] = copy.deepcopy(v)
             # preserve unknown config blocks verbatim (not in ALL_MODULES, not custom/, no #)
             _skip = (set(ALL_MODULES) |
                      {"modules-left", "modules-center", "modules-right",
@@ -1824,6 +1908,8 @@ class VsWaybarSettings(Gtk.Window):
             for k, v in user.items():
                 if (k not in _skip and
                         not k.startswith("custom/") and
+                        not k.startswith("group/") and
+                        not k.startswith("cffi/") and
                         "#" not in k and
                         isinstance(v, dict)):
                     self._unknown_blocks[k] = copy.deepcopy(v)
@@ -2128,6 +2214,57 @@ class VsWaybarSettings(Gtk.Window):
         mod = self._selected_module
         if not mod:
             return
+
+        # cffi/ modules have their own collection path
+        if mod.startswith("cffi/"):
+            ccfg = self._cffi_modules.setdefault(mod, {})
+            mp_w = self._w.get("_cffi_path")
+            if mp_w:
+                ccfg["module_path"] = mp_w.get_text().strip()
+            extra_tv = self._w.get("_cffi_extra")
+            if extra_tv:
+                buf = extra_tv.get_buffer()
+                txt = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False).strip()
+                try:
+                    extra = _json.loads(txt)
+                    # keep only module_path plus whatever extra keys the user defined
+                    for k in list(ccfg.keys()):
+                        if k != "module_path" and k not in extra:
+                            ccfg.pop(k)
+                    for k, v in extra.items():
+                        if k != "module_path":
+                            ccfg[k] = v
+                except Exception:
+                    pass
+            return
+
+        # group/ modules have their own collection path
+        if mod.startswith("group/"):
+            gcfg = self._groups.setdefault(mod, {})
+            orient_w  = self._w.get("_grp_orient")
+            drawer_sw = self._w.get("_grp_drawer_sw")
+            dur_w     = self._w.get("_grp_drawer_dur")
+            cls_w     = self._w.get("_grp_drawer_cls")
+            ltr_w     = self._w.get("_grp_drawer_ltr")
+            store_w   = self._w.get("_grp_mod_store")
+            if orient_w:
+                gcfg["orientation"] = orient_w.get_active_text() or "inherit"
+            if drawer_sw:
+                enabled = drawer_sw.get_active()
+                gcfg["_drawer_enabled"] = enabled
+                if enabled and dur_w and cls_w and ltr_w:
+                    gcfg["drawer"] = {
+                        "transition-duration":      int(dur_w.get_value()),
+                        "children-class":           cls_w.get_text().strip(),
+                        "transition-left-to-right": ltr_w.get_active(),
+                    }
+                elif not enabled:
+                    gcfg.pop("drawer", None)
+            if store_w is not None:
+                gcfg["modules"] = [row[0] for row in store_w
+                                   if row[0]]   # col 0 = module key
+            return
+
         target_cfg = self._dock_cfg if self._selected_module_is_dock else self._cfg
         if mod not in target_cfg:
             target_cfg[mod] = {}
@@ -2150,11 +2287,28 @@ class VsWaybarSettings(Gtk.Window):
             elif isinstance(widget, Gtk.Switch):
                 target_cfg[mod][fkey] = widget.get_active()
             elif isinstance(widget, Gtk.ComboBoxText):
-                target_cfg[mod][fkey] = widget.get_active_text()
+                # use active_id (the semantic key) — falls back to active_text for legacy combos
+                val = widget.get_active_id()
+                if val is None:
+                    val = widget.get_active_text() or ""
+                target_cfg[mod][fkey] = val
 
         # strip keys that must never appear in saved JSON
         if mod == "clock":
             target_cfg[mod].pop("format-alt", None)
+
+        # hyprland/workspaces — persistent-workspaces is a dict, handle separately
+        if mod == "hyprland/workspaces":
+            pw_sw  = self._w.get("_pw_switch")
+            pw_en  = self._w.get("_pw_entry")
+            if pw_sw is not None and isinstance(pw_sw, Gtk.Switch):
+                if pw_sw.get_active() and pw_en is not None:
+                    try:
+                        target_cfg[mod]["persistent-workspaces"] = _json.loads(pw_en.get_text())
+                    except Exception:
+                        pass  # keep existing value if JSON is invalid
+                else:
+                    target_cfg[mod].pop("persistent-workspaces", None)
 
         # collect color for user modules
         suffix = mod[7:] if mod.startswith("custom/") else ""
@@ -2164,6 +2318,42 @@ class VsWaybarSettings(Gtk.Window):
                 val = col_entry.get_text().strip()
                 if re.match(r'^#[0-9a-fA-F]{6}$', val, re.IGNORECASE):
                     target_cfg[mod]["_color"] = val.lower()
+
+        # custom user module — GTK menu mode
+        suffix = mod[7:] if mod.startswith("custom/") else ""
+        if suffix and suffix not in _RESERVED_CUSTOM and target_cfg[mod].get("_menu_mode"):
+            store   = self._w.get("_menu_store")
+            trigger = self._w.get("_menu_trigger")
+            xml_ent = self._w.get("_menu_file_entry")
+            if store is not None:
+                # collect flat rows from ListStore
+                rows = [(row[0], row[1], row[2], row[3]) for row in store]
+
+                # build menu-actions (only items with commands)
+                actions = {r[2]: r[3] for r in rows
+                           if r[0] == "item" and r[3].strip()}
+
+                xml_path = xml_ent.get_text().strip() if xml_ent else ""
+                if not xml_path:
+                    xml_path = os.path.expanduser(f"~/.config/waybar/{suffix}_menu.xml")
+
+                trig_val = "on-click"
+                if trigger is not None:
+                    t = trigger.get_active_text()
+                    if t:
+                        trig_val = t
+
+                target_cfg[mod]["menu"]         = trig_val
+                target_cfg[mod]["menu-file"]    = xml_path
+                target_cfg[mod]["menu-actions"] = actions
+                target_cfg[mod]["_menu_rows"]   = rows   # preserve for reload
+
+                # remove on-click / tooltip-format — replaced by menu
+                target_cfg[mod].pop("on-click",       None)
+                target_cfg[mod].pop("tooltip-format", None)
+
+                # stash XML for _on_preview to write
+                self._w["_pending_menu_xml"] = (xml_path, rows)
 
         # rebuild custom/arch format from size + color + glyph controls
         if mod == "custom/arch":
@@ -2198,6 +2388,8 @@ class VsWaybarSettings(Gtk.Window):
                     for _k in _CLOCK_OPTIONAL_KEYS:
                         if _k in mod_cfg and str(mod_cfg[_k]).strip() == "":
                             mod_cfg.pop(_k)
+                if not mod_cfg.get("justify", ""):
+                    mod_cfg.pop("justify", None)
                 out[mod] = mod_cfg
         # named instances (e.g. battery#bat2, pulseaudio#microphone)
         for k in self._cfg.get("_named_instances", []):
@@ -2216,13 +2408,22 @@ class VsWaybarSettings(Gtk.Window):
             if key in self._cfg and key in _bar_zone_mods:
                 mc = self._cfg[key]
                 entry = {"format": mc.get("format", "󰘳"), "tooltip": False}
-                oc = mc.get("on-click", "").strip()
-                if oc:
-                    entry["on-click"] = oc
-                tt = mc.get("tooltip-format", "").strip()
-                if tt:
-                    entry["tooltip-format"] = tt
-                    entry["tooltip"] = True
+                if mc.get("_menu_mode"):
+                    # GTK menu mode — write menu-* keys, omit on-click/tooltip
+                    entry["tooltip"] = False
+                    trig = mc.get("menu", "on-click")
+                    entry[trig]          = "noop"   # needed by Waybar to register click
+                    entry["menu"]        = trig
+                    entry["menu-file"]   = mc.get("menu-file", f"~/.config/waybar/{suffix}_menu.xml")
+                    entry["menu-actions"] = mc.get("menu-actions", {})
+                else:
+                    oc = mc.get("on-click", "").strip()
+                    if oc:
+                        entry["on-click"] = oc
+                    tt = mc.get("tooltip-format", "").strip()
+                    if tt:
+                        entry["tooltip-format"] = tt
+                        entry["tooltip"] = True
                 out[key] = entry
         # dock modules used in bar zones — copy definition from dock_cfg
         bar_mods = (self._cfg.get("modules-left", []) +
@@ -2240,7 +2441,56 @@ class VsWaybarSettings(Gtk.Window):
                     entry["tooltip-format"] = tt
                     entry["tooltip"] = True
                 out[mod] = entry
+        # modules referenced inside groups — ensure they have a config block
+        for gcfg_item in self._groups.values():
+            for m in gcfg_item.get("modules", []):
+                if m in out or m.startswith("group/"):
+                    continue   # already written or nested group
+                if m in ALL_MODULES:
+                    # use cfg if available, else fall back to DEFAULTS
+                    src = self._cfg.get(m, DEFAULTS.get(m, {}))
+                    if src:
+                        mod_cfg = dict(src)
+                        # strip internal Studio keys
+                        for _ik in ("anim-color-1", "anim-color-2", "anim-duration",
+                                    "button-radius", "button-pad-v", "button-pad-h",
+                                    "button-minw", "_color", "_menu_mode", "_menu_rows"):
+                            mod_cfg.pop(_ik, None)
+                        out[m] = mod_cfg
+                elif m.startswith("custom/") and m in self._cfg:
+                    mc = self._cfg[m]
+                    entry = {"format": mc.get("format", "󰘳"), "tooltip": False}
+                    oc = mc.get("on-click", "").strip()
+                    if oc:
+                        entry["on-click"] = oc
+                    out[m] = entry
+
         out["name"] = "bar"
+
+        # group/ modules — serialize with full structure
+        for gname, gcfg in self._groups.items():
+            entry = {
+                "orientation": gcfg.get("orientation", "inherit"),
+                "modules":     gcfg.get("modules", []),
+            }
+            if gcfg.get("_drawer_enabled", "drawer" in gcfg):
+                drawer_src = gcfg.get("drawer", {})
+                entry["drawer"] = {
+                    "transition-duration":    drawer_src.get("transition-duration", 500),
+                    "children-class":         drawer_src.get("children-class", ""),
+                    "transition-left-to-right": drawer_src.get("transition-left-to-right", False),
+                }
+            out[gname] = entry
+
+        # cffi/ modules in bar zones
+        _bar_zone_set = set(
+            self._cfg.get("modules-left", []) +
+            self._cfg.get("modules-center", []) +
+            self._cfg.get("modules-right", [])
+        )
+        for cname, ccfg in self._cffi_modules.items():
+            if cname in _bar_zone_set:
+                out[cname] = copy.deepcopy(ccfg)
 
         # unknown blocks — preserved verbatim so we don't drop user config
         for k, v in self._unknown_blocks.items():
@@ -2280,6 +2530,50 @@ class VsWaybarSettings(Gtk.Window):
                     entry["tooltip-format"] = tt
                     entry["tooltip"]        = True
                 dock[mod] = entry
+        # group/ modules referenced in dock zones — write group block + member configs
+        _dock_zone_set = set(all_dock_mods)
+        for gname, gcfg in self._groups.items():
+            if gname not in _dock_zone_set:
+                continue
+            entry = {
+                "orientation": gcfg.get("orientation", "inherit"),
+                "modules":     gcfg.get("modules", []),
+            }
+            if gcfg.get("_drawer_enabled", "drawer" in gcfg):
+                drawer_src = gcfg.get("drawer", {})
+                entry["drawer"] = {
+                    "transition-duration":      drawer_src.get("transition-duration", 500),
+                    "children-class":           drawer_src.get("children-class", ""),
+                    "transition-left-to-right": drawer_src.get("transition-left-to-right", False),
+                }
+            dock[gname] = entry
+            # ensure member modules have a config block in dock dict
+            for m in gcfg.get("modules", []):
+                if m in dock or m.startswith("group/"):
+                    continue
+                if m in ALL_MODULES:
+                    src = self._cfg.get(m, DEFAULTS.get(m, {}))
+                    if src:
+                        mod_cfg = dict(src)
+                        for _ik in ("anim-color-1", "anim-color-2", "anim-duration",
+                                    "button-radius", "button-pad-v", "button-pad-h",
+                                    "button-minw", "_color", "_menu_mode", "_menu_rows"):
+                            mod_cfg.pop(_ik, None)
+                        dock[m] = mod_cfg
+                elif m.startswith("custom/") and m not in dock:
+                    mc = self._cfg.get(m) or self._dock_cfg.get(m)
+                    if mc:
+                        entry_m = {"format": mc.get("format", "󰘳"), "tooltip": False}
+                        oc = mc.get("on-click", "").strip()
+                        if oc:
+                            entry_m["on-click"] = oc
+                        dock[m] = entry_m
+
+        # cffi/ modules in dock zones
+        _dock_zone_cffi = set(all_dock_mods)
+        for cname, ccfg in self._cffi_modules.items():
+            if cname in _dock_zone_cffi:
+                dock[cname] = copy.deepcopy(ccfg)
 
         # Return array, filtering disabled bars
         bar_disabled  = self._cfg.get("output")      == "__disabled__"
@@ -2922,6 +3216,15 @@ class VsWaybarSettings(Gtk.Window):
                 json.dump(cfg_out, f, indent=4, ensure_ascii=False)
             with open(self._css_path, "w") as f:
                 f.write(css_out)
+            # write GTK menu XML if a menu module is active
+            pending = self._w.get("_pending_menu_xml")
+            if pending:
+                xml_path, rows = pending
+                xml_path_exp = os.path.expanduser(xml_path)
+                os.makedirs(os.path.dirname(xml_path_exp), exist_ok=True)
+                with open(xml_path_exp, "w", encoding="utf-8") as f:
+                    f.write(_build_menu_xml(rows))
+                self._w.pop("_pending_menu_xml", None)
         except Exception as e:
             self._err(f"No se pudo escribir config:\n{e}")
             return
@@ -2967,7 +3270,9 @@ class VsWaybarSettings(Gtk.Window):
         )
         known = (set(ALL_MODULES) |
                  {f"custom/{s}" for s in self._cfg.get("_user_modules", [])} |
-                 set(self._cfg.get("_named_instances", [])))
+                 set(self._cfg.get("_named_instances", [])) |
+                 set(self._groups.keys()) |
+                 set(self._cffi_modules.keys()))
 
         # Modules in layout that the app doesn't know how to edit
         uneditable_in_layout = [m for m in all_zones if m not in known]
@@ -3870,6 +4175,25 @@ class VsWaybarSettings(Gtk.Window):
             r      = dock_r if is_dock else zone_r
             op     = dock_op if is_dock else opacity
 
+            # cffi/ — render as plugin pill with icon
+            if mod.startswith("cffi/"):
+                suffix = mod[5:]
+                return _pill(f"󱋦  {suffix}", pad, bstyle, r, op)
+
+            # group/ — render leader (first child) + collapse indicator
+            if mod.startswith("group/"):
+                gcfg    = self._groups.get(mod, {})
+                members = gcfg.get("modules", [])
+                leader  = members[0] if members else None
+                rest    = len(members) - 1 if members else 0
+                leader_html = mod_html(leader, is_dock) if leader else ""
+                indicator   = (
+                    f'<span style="color:{sub0};font-size:0.7em;'
+                    f'padding:0 2px">+{rest}</span>'
+                    if rest > 0 else ""
+                )
+                return leader_html + indicator
+
             if mod == "hyprland/workspaces":
                 bubbles = ""
                 for i in range(1, 6):
@@ -4042,6 +4366,12 @@ class VsWaybarSettings(Gtk.Window):
         def _zone_label(mod):
             if mod in MODULE_LABELS:
                 return MODULE_LABELS[mod]
+            if mod.startswith("cffi/"):
+                return ("󱋦", mod[5:])
+            if mod.startswith("group/"):
+                suffix = mod[6:]
+                has_drawer = "drawer" in self._groups.get(mod, {})
+                return ("󱒊" if has_drawer else "󰾮", suffix)
             glyph = (cfg.get(mod, {}) or
                      self._dock_cfg.get(mod, {}) or
                      self._cfg.get(mod, {})).get("format", "")
@@ -4192,6 +4522,54 @@ class VsWaybarSettings(Gtk.Window):
         mod_key    = model[it][0]
         is_dock_app = bool(model[it][3])
 
+        # cffi/ modules — remove directly
+        if mod_key.startswith("cffi/"):
+            self._cffi_modules.pop(mod_key, None)
+            for zone in ("modules-left", "modules-center", "modules-right"):
+                for lst, ws in ((self._cfg, self._w), (self._dock_cfg, self._w_dock)):
+                    z = lst.get(zone, [])
+                    if mod_key in z:
+                        z.remove(mod_key)
+                    zs = ws.get(f"zone_{zone}")
+                    if zs:
+                        for row in list(zs):
+                            if row[0] == mod_key:
+                                zs.remove(row.iter)
+                                break
+            model.remove(it)
+            self._selected_module = None
+            self._refresh_preview()
+            return
+
+        # group/ modules — remove directly
+        if mod_key.startswith("group/"):
+            self._groups.pop(mod_key, None)
+            for zone in ("modules-left", "modules-center", "modules-right"):
+                # bar zones
+                lst = self._cfg.get(zone, [])
+                if mod_key in lst:
+                    lst.remove(mod_key)
+                zone_store = self._w.get(f"zone_{zone}")
+                if zone_store:
+                    for row in list(zone_store):
+                        if row[0] == mod_key:
+                            zone_store.remove(row.iter)
+                            break
+                # dock zones
+                lst_d = self._dock_cfg.get(zone, [])
+                if mod_key in lst_d:
+                    lst_d.remove(mod_key)
+                zone_store_d = self._w_dock.get(f"zone_{zone}")
+                if zone_store_d:
+                    for row in list(zone_store_d):
+                        if row[0] == mod_key:
+                            zone_store_d.remove(row.iter)
+                            break
+            model.remove(it)
+            self._selected_module = None
+            self._refresh_preview()
+            return
+
         # Waybar built-in modules — cannot remove
         if not mod_key.startswith("custom/"):
             self._show_alert(
@@ -4211,36 +4589,14 @@ class VsWaybarSettings(Gtk.Window):
         # ── Dock app ──────────────────────────────────────────────────────────
         if is_dock_app:
             self._dock_cfg.pop(mod_key, None)
-            for zone in ("modules-left", "modules-center", "modules-right"):
-                lst = self._dock_cfg.get(zone, [])
-                if mod_key in lst:
-                    lst.remove(mod_key)
-                zone_store = self._w_dock.get(f"zone_{zone}")
-                if zone_store:
-                    for row in list(zone_store):
-                        if row[0] == mod_key:
-                            zone_store.remove(row.iter)
-                            break
-            model.remove(it)
-            if self._module_panel:
-                for child in self._module_panel.get_children():
-                    self._module_panel.remove(child)
-                ph = _lbl("← Select a module", "hint-label")
-                ph.set_valign(Gtk.Align.CENTER)
-                ph.set_halign(Gtk.Align.CENTER)
-                self._module_panel.pack_start(ph, True, True, 0)
-                self._module_panel.show_all()
-            self._selected_module         = None
-            self._selected_module_is_dock = False
-            self._refresh_preview()
-            return
+        else:
+            # ── User command (bar) ────────────────────────────────────────────
+            user_mods = self._cfg.get("_user_modules", [])
+            if suffix in user_mods:
+                user_mods.remove(suffix)
+            self._cfg.pop(mod_key, None)
 
-        # ── User command (bar) ────────────────────────────────────────────────
-        user_mods = self._cfg.get("_user_modules", [])
-        if suffix in user_mods:
-            user_mods.remove(suffix)
-        self._cfg.pop(mod_key, None)
-        # remove from all zone lists (cfg + layout widgets)
+        # remove from all zones — both bar and dock (cfg dicts + layout widgets)
         for zone in ("modules-left", "modules-center", "modules-right"):
             lst = self._cfg.get(zone, [])
             if mod_key in lst:
@@ -4250,6 +4606,15 @@ class VsWaybarSettings(Gtk.Window):
                 for row in list(zone_store):
                     if row[0] == mod_key:
                         zone_store.remove(row.iter)
+                        break
+            lst_d = self._dock_cfg.get(zone, [])
+            if mod_key in lst_d:
+                lst_d.remove(mod_key)
+            zone_store_d = self._w_dock.get(f"zone_{zone}")
+            if zone_store_d:
+                for row in list(zone_store_d):
+                    if row[0] == mod_key:
+                        zone_store_d.remove(row.iter)
                         break
         # remove row from sidebar store (in-place, no rebuild)
         model.remove(it)
@@ -4266,8 +4631,163 @@ class VsWaybarSettings(Gtk.Window):
         self._selected_module_is_dock  = False
         self._refresh_preview()
 
+    def _on_group_add(self, *_):
+        """Crear un nuevo group/ module."""
+        dlg = Gtk.Dialog(title="Nuevo grupo", parent=self,
+                         flags=Gtk.DialogFlags.MODAL)
+        dlg.add_buttons("Cancelar", Gtk.ResponseType.CANCEL,
+                        "Crear",    Gtk.ResponseType.OK)
+        box = dlg.get_content_area()
+        box.set_spacing(10)
+        box.set_margin_start(16); box.set_margin_end(16)
+        box.set_margin_top(12);   box.set_margin_bottom(12)
+        box.pack_start(_lbl("Nombre del grupo (sin \"group/\"):", "field-label"), False, False, 0)
+        entry = Gtk.Entry()
+        entry.set_placeholder_text("p.ej. hardware, power, apps…")
+        entry.connect("activate", lambda _: dlg.response(Gtk.ResponseType.OK))
+        box.pack_start(entry, False, False, 0)
+        box.show_all()
+
+        if dlg.run() == Gtk.ResponseType.OK:
+            name = re.sub(r'[^a-zA-Z0-9_\-]', '', entry.get_text().strip())
+            dlg.destroy()
+            if not name:
+                return
+            gname = f"group/{name}"
+            if gname in self._groups:
+                self._show_alert("Ya existe", f'"{gname}" ya está definido.')
+                return
+            # create empty group
+            self._groups[gname] = {"orientation": "inherit", "modules": []}
+            # add to sidebar store
+            store = self._w.get("group_store")
+            if store:
+                # find "Groups" header row and insert after last group row
+                groups_end = None
+                in_groups  = False
+                for i, row in enumerate(store):
+                    if row[2] and row[1] == "Groups":
+                        in_groups = True
+                        groups_end = i
+                        continue
+                    if in_groups:
+                        if row[2]:   # next header → stop
+                            break
+                        groups_end = i
+                if groups_end is not None:
+                    it_pos = store.get_iter(Gtk.TreePath(groups_end + 1))
+                    store.insert_before(it_pos, [gname, f"󰾮  {name}", False, False])
+                else:
+                    store.append([gname, f"󰾮  {name}", False, False])
+        else:
+            dlg.destroy()
+
+    def _on_cffi_add(self, *_):
+        """Crear un nuevo cffi/ module."""
+        dlg = Gtk.Dialog(title="New CFFI module", parent=self,
+                         flags=Gtk.DialogFlags.MODAL)
+        dlg.add_buttons("Cancel", Gtk.ResponseType.CANCEL,
+                        "Create", Gtk.ResponseType.OK)
+        box = dlg.get_content_area()
+        box.set_spacing(10)
+        box.set_margin_start(16); box.set_margin_end(16)
+        box.set_margin_top(12);   box.set_margin_bottom(12)
+        box.pack_start(_lbl('Module name (without "cffi/"):', "field-label"), False, False, 0)
+        name_entry = Gtk.Entry()
+        name_entry.set_placeholder_text("e.g. lyrics, shader, my_plugin…")
+        name_entry.connect("activate", lambda _: dlg.response(Gtk.ResponseType.OK))
+        box.pack_start(name_entry, False, False, 0)
+        box.pack_start(_lbl("Module path (.so):", "field-label"), False, False, 0)
+        path_entry = Gtk.Entry()
+        path_entry.set_placeholder_text("~/.config/waybar/cffi/module.so")
+        path_entry.connect("activate", lambda _: dlg.response(Gtk.ResponseType.OK))
+        box.pack_start(path_entry, False, False, 0)
+        box.show_all()
+
+        if dlg.run() == Gtk.ResponseType.OK:
+            name = re.sub(r'[^a-zA-Z0-9_\-]', '', name_entry.get_text().strip())
+            path = path_entry.get_text().strip()
+            dlg.destroy()
+            if not name:
+                return
+            cname = f"cffi/{name}"
+            if cname in self._cffi_modules:
+                self._show_alert("Already exists", f'"{cname}" is already defined.')
+                return
+            self._cffi_modules[cname] = {"module_path": path}
+            # add to sidebar store after "CFFI Modules" header
+            store = self._w.get("cffi_store")
+            if store:
+                cffi_end = None
+                in_cffi  = False
+                for i, row in enumerate(store):
+                    if row[2] and row[1] == "CFFI Modules":
+                        in_cffi = True
+                        cffi_end = i
+                        continue
+                    if in_cffi:
+                        if row[2]:
+                            break
+                        cffi_end = i
+                if cffi_end is not None:
+                    it_pos = store.get_iter(Gtk.TreePath(cffi_end + 1))
+                    store.insert_before(it_pos, [cname, f"󱋦  {name}", False, False])
+                else:
+                    store.append([cname, f"󱋦  {name}", False, False])
+            # select the new row immediately
+            tv = self._w.get("module_tv")
+            if tv and store:
+                for i, row in enumerate(store):
+                    if row[0] == cname:
+                        it = store.get_iter(Gtk.TreePath(i))
+                        tv.get_selection().select_iter(it)
+                        tv.scroll_to_cell(store.get_path(it))
+                        break
+        else:
+            dlg.destroy()
+
+    def _build_cffi_form(self, cname: str) -> Gtk.Widget:
+        """Formulario para un módulo cffi/name."""
+        ccfg   = self._cffi_modules.setdefault(cname, {})
+        suffix = cname[5:]
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        outer.set_margin_start(20); outer.set_margin_end(20)
+        outer.set_margin_top(14);   outer.set_margin_bottom(14)
+
+        outer.pack_start(_section(f"cffi/{suffix}"), False, False, 0)
+        outer.pack_start(_hint("CFFI — third-party dynamic library widget"), False, False, 4)
+
+        # module_path
+        mp_entry = Gtk.Entry()
+        mp_entry.set_text(ccfg.get("module_path", ""))
+        mp_entry.set_placeholder_text("~/.config/waybar/cffi/module.so")
+        self._w["_cffi_path"] = mp_entry
+        outer.pack_start(_field("Module path (.so)", mp_entry), False, False, 0)
+
+        # extra keys — free JSON for library-specific options
+        extra = {k: v for k, v in ccfg.items() if k != "module_path"}
+        extra_lbl = _lbl("Extra config (JSON)", "field-label")
+        extra_lbl.set_margin_top(10)
+        outer.pack_start(extra_lbl, False, False, 0)
+        outer.pack_start(
+            _hint("Additional keys required by this library. Edit as JSON object."),
+            False, False, 0)
+        tv_extra = Gtk.TextView()
+        tv_extra.set_editable(True)
+        tv_extra.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        tv_extra.get_buffer().set_text(_json.dumps(extra, indent=2) if extra else "{}")
+        self._w["_cffi_extra"] = tv_extra
+        sw_extra = Gtk.ScrolledWindow()
+        sw_extra.set_size_request(-1, 120)
+        sw_extra.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        sw_extra.add(tv_extra)
+        outer.pack_start(sw_extra, False, False, 4)
+
+        return _scrolled(outer)
+
     def _build_user_module_form(self, mod: str, source_cfg: dict = None) -> Gtk.Widget:
-        """Form for a user-defined custom module (launcher style — like custom/settings)."""
+        """Form for a user-defined custom module — Launcher or GTK Menu mode."""
         if source_cfg is None:
             source_cfg = self._cfg
         suffix = mod[7:]
@@ -4283,18 +4803,17 @@ class VsWaybarSettings(Gtk.Window):
         outer.pack_start(_hint(f"{ctx}: custom/{suffix}"), False, False, 4)
 
         # ── Glyph picker ──────────────────────────────────────────────────────
-        outer.pack_start(_lbl("Icon", "field-label"), False, False, 8)
+        outer.pack_start(_lbl("Ícono", "field-label"), False, False, 8)
 
         current_glyph = cfg.get("format", "󰘳")
 
-        # Button whose label IS the glyph — markup set before show, no idle_add needed
         pick_btn = Gtk.Button()
         pick_btn.get_style_context().add_class("open-btn")
         pick_btn.set_halign(Gtk.Align.START)
         btn_lbl = Gtk.Label()
         btn_lbl.set_markup(
             f"<span font_desc='JetBrainsMono Nerd Font Mono 28'>{current_glyph}</span>"
-            "   Choose icon…")
+            "   Elegir ícono…")
         btn_lbl.show()
         pick_btn.add(btn_lbl)
 
@@ -4304,8 +4823,7 @@ class VsWaybarSettings(Gtk.Window):
                 cfg["format"] = sel
                 btn_lbl.set_markup(
                     f"<span font_desc='JetBrainsMono Nerd Font Mono 28'>{sel}</span>"
-                    "   Choose icon…")
-                # update sidebar label
+                    "   Elegir ícono…")
                 store = self._w.get("user_mod_store")
                 if store:
                     for row in store:
@@ -4347,25 +4865,303 @@ class VsWaybarSettings(Gtk.Window):
         color_row.pack_start(hex_entry, False, False, 0)
         outer.pack_start(color_row, False, False, 8)
 
-        # ── On click ──────────────────────────────────────────────────────────
+        # ── Modo: Launcher / Menú ─────────────────────────────────────────────
+        outer.pack_start(_section("Modo"), False, False, 0)
+
+        is_menu_mode = cfg.get("_menu_mode", False)
+
+        mode_box = Gtk.Box(spacing=0)
+        mode_box.get_style_context().add_class("linked")
+        btn_launcher = Gtk.ToggleButton(label="  Launcher")
+        btn_menu_m   = Gtk.ToggleButton(label="󰍜  Menú popup")
+        btn_launcher.set_active(not is_menu_mode)
+        btn_menu_m.set_active(is_menu_mode)
+        mode_box.pack_start(btn_launcher, True, True, 0)
+        mode_box.pack_start(btn_menu_m,   True, True, 0)
+        outer.pack_start(mode_box, False, False, 6)
+
+        # Contenedores intercambiables
+        launcher_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        menu_box     = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
+        # ── Launcher panel ────────────────────────────────────────────────────
         oc_e = Gtk.Entry()
         oc_e.set_text(cfg.get("on-click", ""))
-        oc_e.set_placeholder_text("firefox, kitty, rofi -show run…")
+        oc_e.set_placeholder_text("firefox, kitty, código…")
         fields["on-click"] = oc_e
-        outer.pack_start(_lbl("On click", "field-label"), False, False, 8)
-        outer.pack_start(oc_e, False, False, 0)
+        launcher_box.pack_start(_lbl("Al hacer click", "field-label"), False, False, 8)
+        launcher_box.pack_start(oc_e, False, False, 0)
+        launcher_box.pack_start(_hint("Waybar muestra el ícono — el click ejecuta este comando."), False, False, 4)
 
-        outer.pack_start(_hint(
-            "Waybar shows the icon — clicking runs this command."
-        ), False, False, 4)
-
-        # ── Tooltip text ──────────────────────────────────────────────────────
         tt_e = Gtk.Entry()
         tt_e.set_text(cfg.get("tooltip-format", ""))
-        tt_e.set_placeholder_text("Optional hover text")
+        tt_e.set_placeholder_text("Texto opcional al pasar el mouse")
         fields["tooltip-format"] = tt_e
-        outer.pack_start(_lbl("Tooltip text", "field-label"), False, False, 8)
-        outer.pack_start(tt_e, False, False, 0)
+        launcher_box.pack_start(_lbl("Tooltip", "field-label"), False, False, 8)
+        launcher_box.pack_start(tt_e, False, False, 0)
+
+        # ── Menú popup panel ──────────────────────────────────────────────────
+        menu_box.pack_start(_section("Configuración del menú"), False, False, 0)
+
+        # Trigger
+        trigger_combo = Gtk.ComboBoxText()
+        for t in ("on-click", "on-right-click", "on-middle-click",
+                  "on-scroll-up", "on-scroll-down"):
+            trigger_combo.append_text(t)
+        cur_trigger = cfg.get("menu", "on-click")
+        _triggers = ["on-click", "on-right-click", "on-middle-click",
+                     "on-scroll-up", "on-scroll-down"]
+        trigger_combo.set_active(_triggers.index(cur_trigger)
+                                 if cur_trigger in _triggers else 0)
+        self._w["_menu_trigger"] = trigger_combo
+        menu_box.pack_start(_row("Activar con", trigger_combo), False, False, 0)
+
+        # Archivo XML
+        default_xml = os.path.expanduser(
+            f"~/.config/waybar/{suffix}_menu.xml")
+        xml_entry = Gtk.Entry()
+        xml_entry.set_text(cfg.get("menu-file", default_xml))
+        xml_entry.set_placeholder_text(default_xml)
+        self._w["_menu_file_entry"] = xml_entry
+        menu_box.pack_start(_row("Archivo XML", xml_entry), False, False, 0)
+        menu_box.pack_start(_hint("El archivo se genera automáticamente al aplicar."), False, False, 2)
+
+        # ── Lista de ítems (flat) ─────────────────────────────────────────────
+        menu_box.pack_start(_section("Ítems del menú"), False, False, 0)
+
+        # store: (type, label, id, command)  — type: 'item' | 'separator'
+        item_store = Gtk.ListStore(str, str, str, str)
+        self._w["_menu_store"] = item_store
+
+        # Cargar desde XML existente o desde cfg guardado
+        xml_path = cfg.get("menu-file", default_xml)
+        existing_actions = cfg.get("menu-actions", {})
+        existing_rows = []
+        if os.path.isfile(os.path.expanduser(xml_path)):
+            existing_rows = _parse_menu_xml(xml_path, existing_actions)
+        elif "_menu_rows" in cfg:
+            existing_rows = [r for r in cfg["_menu_rows"]
+                             if r[0] in ("item", "separator")]
+
+        for row in existing_rows:
+            item_store.append(list(row))
+
+        # TreeView
+        tv = Gtk.TreeView(model=item_store)
+        tv.set_headers_visible(True)
+        tv.set_reorderable(False)
+        tv.set_activate_on_single_click(True)
+        tv.set_size_request(-1, 180)
+
+        def _type_icon(col, cell, model, it, *_):
+            cell.set_property("text",
+                "●" if model[it][0] == "item" else "─")
+
+        cr_type = Gtk.CellRendererText()
+        cr_type.set_property("foreground", self._theme.get("dim", "#888"))
+        col_type = Gtk.TreeViewColumn("", cr_type)
+        col_type.set_cell_data_func(cr_type, _type_icon)
+        col_type.set_min_width(24)
+        tv.append_column(col_type)
+
+        cr_label = Gtk.CellRendererText()
+        cr_label.set_property("editable", True)
+        col_label = Gtk.TreeViewColumn("Etiqueta", cr_label, text=1)
+        col_label.set_expand(True)
+        tv.append_column(col_label)
+
+        cr_cmd = Gtk.CellRendererText()
+        cr_cmd.set_property("editable", True)
+        cr_cmd.set_property("ellipsize", Pango.EllipsizeMode.END)
+        col_cmd = Gtk.TreeViewColumn("Comando", cr_cmd, text=3)
+        col_cmd.set_expand(True)
+        tv.append_column(col_cmd)
+
+        tv_sw = Gtk.ScrolledWindow()
+        tv_sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        tv_sw.set_size_request(-1, 180)
+        tv_sw.add(tv)
+        menu_box.pack_start(tv_sw, False, False, 4)
+
+        # ── Botones de control ────────────────────────────────────────────────
+        ctrl_row = Gtk.Box(spacing=4)
+
+        def _new_id(base):
+            existing = {row[2] for row in item_store}
+            candidate = _label_to_id(base) or base
+            n, n_idx = candidate, 1
+            while n in existing:
+                n = f"{candidate}_{n_idx}"; n_idx += 1
+            return n
+
+        def _add_item(*_):
+            rid = _new_id("item")
+            item_store.append(["item", "Nuevo ítem", rid, ""])
+            it = item_store.get_iter(Gtk.TreePath(len(item_store) - 1))
+            tv.get_selection().select_iter(it)
+            _refresh_edit_panel(tv.get_selection())
+
+        def _add_sep(*_):
+            rid = _new_id("sep")
+            item_store.append(["separator", "─ separator ─", rid, ""])
+
+        def _delete_item(*_):
+            model, it = tv.get_selection().get_selected()
+            if it:
+                item_store.remove(it)
+                _refresh_edit_panel(tv.get_selection())
+
+        def _move(direction):
+            model, it = tv.get_selection().get_selected()
+            if not it:
+                return
+            path = item_store.get_path(it)
+            idx  = path.get_indices()[0]
+            n    = len(item_store)
+            if direction == -1 and idx > 0:
+                item_store.swap(it, item_store.get_iter(Gtk.TreePath(idx - 1)))
+            elif direction == 1 and idx < n - 1:
+                item_store.swap(it, item_store.get_iter(Gtk.TreePath(idx + 1)))
+
+        for label_b, cb in (
+            ("+ Ítem", _add_item),
+            ("─ Sep",  _add_sep),
+            ("↑",      lambda *_: _move(-1)),
+            ("↓",      lambda *_: _move(1)),
+            ("✕",      _delete_item),
+        ):
+            b = Gtk.Button(label=label_b)
+            b.get_style_context().add_class("open-btn")
+            b.connect("clicked", cb)
+            ctrl_row.pack_start(b, True, True, 0)
+
+        menu_box.pack_start(ctrl_row, False, False, 2)
+
+        # ── Panel de edición inline ───────────────────────────────────────────
+        menu_box.pack_start(_section("Editar seleccionado"), False, False, 0)
+
+        edit_grid = Gtk.Grid()
+        edit_grid.set_column_spacing(8)
+        edit_grid.set_row_spacing(6)
+        edit_grid.set_margin_top(4)
+
+        e_label = Gtk.Entry(); e_label.set_hexpand(True)
+        e_label.set_placeholder_text("Etiqueta visible")
+        e_id    = Gtk.Entry(); e_id.set_hexpand(True)
+        e_id.set_placeholder_text("id único (auto)")
+        e_cmd   = Gtk.Entry(); e_cmd.set_hexpand(True)
+        e_cmd.set_placeholder_text("comando a ejecutar")
+
+        _auto_id = [True]
+
+        def _lbl_changed(*_):
+            if _auto_id[0]:
+                e_id.set_text(_label_to_id(e_label.get_text()))
+
+        def _id_manual(*_):
+            if e_id.get_text() != _label_to_id(e_label.get_text()):
+                _auto_id[0] = False
+
+        e_label.connect("changed", _lbl_changed)
+        e_id.connect("changed",    _id_manual)
+
+        for row_n, (lbl_txt, widget) in enumerate((
+            ("Etiqueta", e_label),
+            ("ID",       e_id),
+            ("Comando",  e_cmd),
+        )):
+            lbl_w = Gtk.Label(label=lbl_txt)
+            lbl_w.set_xalign(1)
+            lbl_w.set_size_request(70, -1)
+            lbl_w.get_style_context().add_class("field-label")
+            edit_grid.attach(lbl_w,  0, row_n, 1, 1)
+            edit_grid.attach(widget, 1, row_n, 1, 1)
+
+        self._w["_menu_e_label"] = e_label
+        self._w["_menu_e_id"]    = e_id
+        self._w["_menu_e_cmd"]   = e_cmd
+        menu_box.pack_start(edit_grid, False, False, 0)
+        menu_box.pack_start(_hint("El ID se genera automáticamente desde la etiqueta."), False, False, 2)
+
+        # ── Conectar selección → panel de edición ─────────────────────────────
+        _updating_edit = [False]
+
+        def _refresh_edit_panel(selection):
+            model, it = selection.get_selected()
+            if not it:
+                e_label.set_text(""); e_id.set_text(""); e_cmd.set_text("")
+                for w in (e_label, e_id, e_cmd): w.set_sensitive(False)
+                return
+            rtype = model[it][0]
+            for w in (e_label, e_id, e_cmd): w.set_sensitive(True)
+            e_cmd.set_sensitive(rtype == "item")
+            _updating_edit[0] = True
+            e_label.set_text(model[it][1])
+            e_id.set_text(model[it][2])
+            e_cmd.set_text(model[it][3])
+            _auto_id[0] = False
+            _updating_edit[0] = False
+
+        def _edit_to_store(*_):
+            if _updating_edit[0]:
+                return
+            model, it = tv.get_selection().get_selected()
+            if not it:
+                return
+            item_store[it][1] = e_label.get_text()
+            item_store[it][2] = e_id.get_text() or _label_to_id(e_label.get_text())
+            item_store[it][3] = e_cmd.get_text()
+
+        for w in (e_label, e_id, e_cmd):
+            w.connect("changed", _edit_to_store)
+
+        tv.get_selection().connect("changed", _refresh_edit_panel)
+        _refresh_edit_panel(tv.get_selection())
+
+        def _cr_label_edited(cr, path, new_text):
+            it = item_store.get_iter_from_string(path)
+            item_store[it][1] = new_text
+            tv.get_selection().select_iter(it)
+            _refresh_edit_panel(tv.get_selection())
+
+        def _cr_cmd_edited(cr, path, new_text):
+            it = item_store.get_iter_from_string(path)
+            item_store[it][3] = new_text
+            tv.get_selection().select_iter(it)
+
+        cr_label.connect("edited", _cr_label_edited)
+        cr_cmd.connect("edited",   _cr_cmd_edited)
+
+        # ── Ensamblar paneles según modo ──────────────────────────────────────
+        outer.pack_start(launcher_box, False, False, 0)
+        outer.pack_start(menu_box,     False, False, 0)
+
+        def _show_mode(menu):
+            launcher_box.set_visible(not menu)
+            menu_box.set_visible(menu)
+            cfg["_menu_mode"] = menu
+            # en modo launcher: on-click es válido; en modo menú: se quita
+            if menu:
+                fields.pop("on-click",       None)
+                fields.pop("tooltip-format", None)
+            else:
+                fields["on-click"]       = oc_e
+                fields["tooltip-format"] = tt_e
+
+        _show_mode(is_menu_mode)
+
+        def _on_launcher_toggle(btn):
+            if btn.get_active():
+                btn_menu_m.set_active(False)
+                _show_mode(False)
+
+        def _on_menu_toggle(btn):
+            if btn.get_active():
+                btn_launcher.set_active(False)
+                _show_mode(True)
+
+        btn_launcher.connect("toggled", _on_launcher_toggle)
+        btn_menu_m.connect("toggled",   _on_menu_toggle)
 
         return _scrolled(outer)
 
@@ -4509,14 +5305,21 @@ class VsWaybarSettings(Gtk.Window):
         content.set_margin_end(16)
         content.set_margin_top(16)
         content.set_margin_bottom(16)
-        # combine built-in + user modules + dock apps
+        # combine built-in + user modules + groups + dock apps
         user_mods  = [f"custom/{s}" for s in self._cfg.get("_user_modules", [])]
         dock_mods  = [k for k in self._dock_cfg if k.startswith("custom/") and k not in ALL_MODULES]
         cfg_mods   = [k for k in cfg if k.startswith("custom/") and k not in ALL_MODULES]
-        all_mods   = ALL_MODULES + [m for m in user_mods + dock_mods + cfg_mods if m not in ALL_MODULES]
+        group_mods = list(self._groups.keys())
+        cffi_mods  = list(self._cffi_modules.keys())
+        all_mods   = ALL_MODULES + [m for m in user_mods + dock_mods + cfg_mods + group_mods + cffi_mods
+                                    if m not in ALL_MODULES]
         def _mod_label(m):
             if m in MODULE_LABELS:
                 return MODULE_LABELS[m]
+            if m.startswith("cffi/"):
+                return ("󱋦", m[5:])
+            if m.startswith("group/"):
+                return ("󱒊" if "drawer" in self._groups.get(m, {}) else "󰾮", m[6:])
             suffix = m[7:] if m.startswith("custom/") else m
             glyph  = cfg.get(m, self._dock_cfg.get(m, self._cfg.get(m, {}))).get("format", "󰘳")
             return (glyph, suffix)
@@ -4592,6 +5395,20 @@ class VsWaybarSettings(Gtk.Window):
                 label = f"{icon}  {name}#{k.split('#')[1]}"
                 store.append([k, label, False, False])
 
+        store.append(["", "Groups", True, False])
+        for gname in self._groups:
+            suffix = gname[6:]
+            has_drawer = "drawer" in self._groups[gname]
+            icon = "󱒊" if has_drawer else "󰾮"
+            store.append([gname, f"{icon}  {suffix}", False, False])
+        self._w["group_store"] = store   # ref para añadir/quitar grupos
+
+        store.append(["", "CFFI Modules", True, False])
+        for cname in self._cffi_modules:
+            suffix = cname[5:]
+            store.append([cname, f"󱋦  {suffix}", False, False])
+        self._w["cffi_store"] = store    # ref para añadir/quitar cffi
+
         store.append(["", "User Commands", True, False])
         for suffix in self._cfg.get("_user_modules", []):
             glyph = self._cfg.get(f"custom/{suffix}", {}).get("format", "󰘳")
@@ -4635,19 +5452,27 @@ class VsWaybarSettings(Gtk.Window):
         sw.add(tv)
         left.pack_start(sw, True, True, 0)
 
-        # Add / Remove buttons for user modules
+        # Add / Remove buttons
         btn_row = Gtk.Box(spacing=4)
         btn_row.set_margin_start(6)
         btn_row.set_margin_end(6)
         btn_row.set_margin_top(4)
         btn_row.set_margin_bottom(6)
-        add_btn = Gtk.Button(label="+ Add")
+        add_btn = Gtk.Button(label="+ Module")
         add_btn.get_style_context().add_class("open-btn")
         add_btn.connect("clicked", self._on_user_mod_add)
+        grp_btn = Gtk.Button(label="+ Group")
+        grp_btn.get_style_context().add_class("open-btn")
+        grp_btn.connect("clicked", self._on_group_add)
+        cffi_btn = Gtk.Button(label="+ CFFI")
+        cffi_btn.get_style_context().add_class("open-btn")
+        cffi_btn.connect("clicked", self._on_cffi_add)
         rem_btn = Gtk.Button(label="− Remove")
         rem_btn.get_style_context().add_class("open-btn")
         rem_btn.connect("clicked", self._on_user_mod_remove)
         btn_row.pack_start(add_btn, True, True, 0)
+        btn_row.pack_start(grp_btn, True, True, 0)
+        btn_row.pack_start(cffi_btn, True, True, 0)
         btn_row.pack_start(rem_btn, True, True, 0)
         left.pack_start(btn_row, False, False, 0)
 
@@ -4674,18 +5499,189 @@ class VsWaybarSettings(Gtk.Window):
         for child in self._module_panel.get_children():
             self._module_panel.remove(child)
         self._w["mod_fields"] = {}
+        self._w.pop("_pw_switch",          None)
+        self._w.pop("_pw_entry",           None)
+        self._w.pop("_menu_store",         None)
+        self._w.pop("_menu_trigger",       None)
+        self._w.pop("_menu_file_entry",    None)
+        self._w.pop("_menu_e_label",       None)
+        self._w.pop("_menu_e_id",          None)
+        self._w.pop("_menu_e_cmd",         None)
+        self._w.pop("_pending_menu_xml",   None)
+        self._w.pop("_grp_orient",        None)
+        self._w.pop("_grp_drawer_sw",     None)
+        self._w.pop("_grp_drawer_dur",    None)
+        self._w.pop("_grp_drawer_cls",    None)
+        self._w.pop("_grp_drawer_ltr",    None)
+        self._w.pop("_grp_mod_store",     None)
+        self._w.pop("_cffi_path",         None)
+        self._w.pop("_cffi_extra",        None)
         suffix = mod_key[7:] if mod_key.startswith("custom/") else ""
-        if suffix and suffix not in _RESERVED_CUSTOM:
+        if mod_key.startswith("cffi/"):
+            panel = self._build_cffi_form(mod_key)
+        elif mod_key.startswith("group/"):
+            panel = self._build_group_form(mod_key)
+        elif suffix and suffix not in _RESERVED_CUSTOM:
             src = self._dock_cfg if self._selected_module_is_dock else self._cfg
             panel = self._build_user_module_form(mod_key, source_cfg=src)
         elif "#" in mod_key:
-            # Named instance — show base module form, data stored under full key
             panel = self._build_module_form(mod_key)
         else:
             panel = self._build_module_form(mod_key)
         self._module_panel.pack_start(panel, True, True, 0)
         self._module_panel.show_all()
         self._refresh_preview()
+
+    def _build_group_form(self, gname: str) -> Gtk.Widget:
+        """Formulario para un módulo group/name."""
+        gcfg   = self._groups.setdefault(gname, {})
+        suffix = gname[6:]
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        outer.set_margin_start(20); outer.set_margin_end(20)
+        outer.set_margin_top(14);   outer.set_margin_bottom(14)
+
+        outer.pack_start(_section(f"group/{suffix}"), False, False, 0)
+        outer.pack_start(_hint(f"Clave Waybar: {gname}"), False, False, 4)
+
+        # ── Orientación ───────────────────────────────────────────────────────
+        outer.pack_start(_section("Orientación"), False, False, 0)
+        orient_combo = Gtk.ComboBoxText()
+        for o in ("inherit", "horizontal", "vertical"):
+            orient_combo.append_text(o)
+        _orients = ["inherit", "horizontal", "vertical"]
+        cur_orient = gcfg.get("orientation", "inherit")
+        orient_combo.set_active(_orients.index(cur_orient)
+                                if cur_orient in _orients else 0)
+        self._w["_grp_orient"] = orient_combo
+        outer.pack_start(_row("Orientación", orient_combo), False, False, 0)
+
+        # ── Drawer ────────────────────────────────────────────────────────────
+        outer.pack_start(_section("Drawer (cajón animado)"), False, False, 0)
+        outer.pack_start(_hint("El primer módulo de la lista actúa como líder — los demás se ocultan hasta el hover."), False, False, 2)
+
+        has_drawer = "drawer" in gcfg or gcfg.get("_drawer_enabled", False)
+        drawer_sw_row, drawer_sw = _switch_row("Activar drawer", has_drawer)
+        self._w["_grp_drawer_sw"] = drawer_sw
+        outer.pack_start(drawer_sw_row, False, False, 0)
+
+        drawer_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        drawer_src = gcfg.get("drawer", {})
+
+        dur_spin = _spin(drawer_src.get("transition-duration", 500), 0, 2000, 50)
+        self._w["_grp_drawer_dur"] = dur_spin
+        drawer_box.pack_start(_row("Duración (ms)", dur_spin), False, False, 0)
+
+        cls_entry = Gtk.Entry()
+        cls_entry.set_text(drawer_src.get("children-class", ""))
+        cls_entry.set_placeholder_text("CSS class para los hijos")
+        self._w["_grp_drawer_cls"] = cls_entry
+        drawer_box.pack_start(_row("Children class", cls_entry), False, False, 0)
+
+        ltr_row, ltr_sw = _switch_row("Left-to-right", drawer_src.get("transition-left-to-right", False))
+        self._w["_grp_drawer_ltr"] = ltr_sw
+        drawer_box.pack_start(ltr_row, False, False, 0)
+
+        drawer_box.set_visible(has_drawer)
+        outer.pack_start(drawer_box, False, False, 0)
+        drawer_sw.connect("notify::active",
+                          lambda s, _: drawer_box.set_visible(s.get_active()))
+
+        # ── Lista de módulos del grupo ─────────────────────────────────────────
+        outer.pack_start(_section("Módulos del grupo"), False, False, 0)
+        outer.pack_start(_hint("El primer ítem es el líder — siempre visible en drawer mode."), False, False, 2)
+
+        # store: (key, label)
+        mod_store = Gtk.ListStore(str, str)
+        self._w["_grp_mod_store"] = mod_store
+
+        def _mod_label(key):
+            if key in MODULE_LABELS:
+                icon, name = MODULE_LABELS[key]
+                return f"{icon}  {name}"
+            if key.startswith("group/"):
+                return f"󰾮  {key[6:]}"
+            if key.startswith("custom/"):
+                glyph = (self._cfg.get(key, {}) or
+                         self._dock_cfg.get(key, {})).get("format", "󰘳")
+                return f"{glyph}  {key[7:]}"
+            return key
+
+        for m in gcfg.get("modules", []):
+            mod_store.append([m, _mod_label(m)])
+
+        mod_tv = Gtk.TreeView(model=mod_store)
+        mod_tv.set_headers_visible(False)
+        mod_tv.set_activate_on_single_click(True)
+        cr_mod = Gtk.CellRendererText()
+        col_mod = Gtk.TreeViewColumn("", cr_mod, text=1)
+        col_mod.set_expand(True)
+        mod_tv.append_column(col_mod)
+        mod_sw_tv = Gtk.ScrolledWindow()
+        mod_sw_tv.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        mod_sw_tv.set_size_request(-1, 160)
+        mod_sw_tv.add(mod_tv)
+        outer.pack_start(mod_sw_tv, False, False, 4)
+
+        # ── ComboBox con módulos disponibles ──────────────────────────────────
+        # Construir lista: todos los módulos conocidos + user modules + otros grupos
+        _available = []
+        for m in sorted(ALL_MODULES):
+            _available.append((m, _mod_label(m)))
+        for s in self._cfg.get("_user_modules", []):
+            k = f"custom/{s}"
+            _available.append((k, _mod_label(k)))
+        for g in self._groups:
+            if g != gname:
+                _available.append((g, _mod_label(g)))
+
+        pick_combo = Gtk.ComboBoxText()
+        for key, label in _available:
+            pick_combo.append(key, label)
+        pick_combo.set_active(0)
+        pick_combo.set_hexpand(True)
+
+        def _grp_add(*_):
+            key = pick_combo.get_active_id()
+            if key:
+                mod_store.append([key, _mod_label(key)])
+
+        def _grp_del(*_):
+            _, it = mod_tv.get_selection().get_selected()
+            if it:
+                mod_store.remove(it)
+
+        def _grp_move(direction):
+            _, it = mod_tv.get_selection().get_selected()
+            if not it:
+                return
+            idx = mod_store.get_path(it).get_indices()[0]
+            n   = len(mod_store)
+            if direction == -1 and idx > 0:
+                mod_store.swap(it, mod_store.get_iter(Gtk.TreePath(idx - 1)))
+            elif direction == 1 and idx < n - 1:
+                mod_store.swap(it, mod_store.get_iter(Gtk.TreePath(idx + 1)))
+
+        add_btn = Gtk.Button(label="+ Agregar")
+        add_btn.get_style_context().add_class("open-btn")
+        add_btn.connect("clicked", _grp_add)
+
+        add_row = Gtk.Box(spacing=4)
+        add_row.pack_start(pick_combo, True,  True,  0)
+        add_row.pack_start(add_btn,   False, False, 0)
+        outer.pack_start(add_row, False, False, 2)
+
+        ctrl_row = Gtk.Box(spacing=4)
+        for lbl_b, cb in (("↑", lambda *_: _grp_move(-1)),
+                           ("↓", lambda *_: _grp_move(1)),
+                           ("✕", _grp_del)):
+            b = Gtk.Button(label=lbl_b)
+            b.get_style_context().add_class("open-btn")
+            b.connect("clicked", cb)
+            ctrl_row.pack_start(b, True, True, 0)
+        outer.pack_start(ctrl_row, False, False, 2)
+
+        return _scrolled(outer)
 
     def _build_module_form(self, mod: str) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -4864,6 +5860,28 @@ class VsWaybarSettings(Gtk.Window):
             add_entry("Format",      "format",          cfg.get("format", "{id}"))
             add_entry("Scroll up",   "on-scroll-up",    cfg.get("on-scroll-up", "hyprctl dispatch workspace e-1"))
             add_entry("Scroll down", "on-scroll-down",  cfg.get("on-scroll-down", "hyprctl dispatch workspace e+1"))
+
+            box.pack_start(_section("Persistent workspaces"), False, False, 0)
+            box.pack_start(_hint('When ON, listed workspaces always appear even if empty. Format: {"*": [1,2,3,4,5]}'), False, False, 0)
+
+            pw_data    = cfg.get("persistent-workspaces")
+            pw_enabled = isinstance(pw_data, dict)
+            pw_default = _json.dumps(pw_data) if pw_enabled else '{"*": [1, 2, 3, 4, 5]}'
+
+            _pw_row, _pw_sw = _switch_row("Enable persistent", pw_enabled)
+            box.pack_start(_pw_row, False, False, 0)
+            self._w["_pw_switch"] = _pw_sw
+
+            _pw_entry = Gtk.Entry()
+            _pw_entry.set_text(pw_default)
+            _pw_entry.set_sensitive(pw_enabled)
+            _pw_entry.set_placeholder_text('{"*": [1, 2, 3, 4, 5]}')
+            self._w["_pw_entry"] = _pw_entry
+            box.pack_start(_field("Workspaces JSON", _pw_entry), False, False, 0)
+
+            _pw_sw.connect("notify::active", lambda s, _: _pw_entry.set_sensitive(s.get_active()))
+            _pw_sw.connect("notify::active", lambda *_: self._refresh_preview())
+            _pw_entry.connect("changed", self._refresh_preview)
 
             box.pack_start(_section("Active workspace animation  (style.css)"), False, False, 0)
             box.pack_start(_hint("Pulses between two colors — mirrors @keyframes ws-active"), False, False, 0)
@@ -5243,6 +6261,19 @@ class VsWaybarSettings(Gtk.Window):
             def_btn.get_style_context().add_class("open-btn")
             def_btn.connect("clicked", _on_load_defaults)
             box.pack_start(def_btn, False, False, 0)
+
+        # ── justify (generic — supported by most modules) ─────────────────────
+        justify_val = cfg.get("justify", "")
+        jc = Gtk.ComboBoxText()
+        for opt in ("", "left", "center", "right"):
+            jc.append(opt, opt if opt else "—")
+        jc.set_active_id(justify_val if justify_val in ("left", "center", "right") else "")
+        fields["justify"] = jc
+        j_sep = Gtk.Separator()
+        j_sep.set_margin_top(12)
+        j_sep.set_margin_bottom(8)
+        box.pack_start(j_sep, False, False, 0)
+        box.pack_start(_row("Text align", jc), False, False, 0)
 
         return _scrolled(box)
 
