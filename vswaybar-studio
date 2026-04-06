@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """vsWaybar Studio — graphical config editor for Waybar"""
 
-__version__ = "1.3.0"
+__version__ = "1.3.1"
 
 import gi
 gi.require_version('Gtk', '3.0')
@@ -3677,7 +3677,7 @@ class VsWaybarSettings(Gtk.Window):
             bar_pos_w = self._w.get("position")
             bar_pos   = bar_pos_w.get_active_text() if bar_pos_w else self._cfg.get("position", "top")
             dock_pos  = w["position"].get_active_text() or "bottom"
-            warn_lbl.set_text(f"⚠  misma posición que el bar ({bar_pos})" if bar_pos == dock_pos else "")
+            warn_lbl.set_text(f"⚠  same position as bar ({bar_pos})" if bar_pos == dock_pos else "")
             self._refresh_preview()
 
         pos.connect("changed", _check_conflict)
@@ -4209,7 +4209,7 @@ class VsWaybarSettings(Gtk.Window):
                     + bubbles + "</span>"
                 )
 
-            # Para módulos del dock usar el format (glifo) del dock config
+            # For dock modules use the format (glyph) from the dock config
             _custom_fb = "󰘳" if mod.startswith("custom/") else mod.split("/")[-1][:4]
             if is_dock and mod in dock:
                 label = dock[mod].get("format", "") or MOD_SAMPLE.get(mod, _custom_fb)
@@ -4388,9 +4388,9 @@ class VsWaybarSettings(Gtk.Window):
         tv.set_headers_visible(False)
         tv.append_column(Gtk.TreeViewColumn("", Gtk.CellRendererText(), text=1))
 
-        # DnD unificado (dentro y entre zonas) — solo target text/plain
-        # No usar set_reorderable: registra GTK_TREE_MODEL_ROW que toma prioridad
-        # sobre TEXT en la negociación, haciendo que data.get_text() falle cross-zona.
+        # Unified DnD (within and between zones) — text/plain target only
+        # Do not use set_reorderable: registers GTK_TREE_MODEL_ROW which takes priority
+        # over TEXT in negotiation, causing data.get_text() to fail cross-zone.
         _dnd_tgts = [Gtk.TargetEntry.new("text/plain", Gtk.TargetFlags.SAME_APP, 0)]
         tv.enable_model_drag_source(
             Gdk.ModifierType.BUTTON1_MASK, _dnd_tgts, Gdk.DragAction.MOVE
@@ -4632,18 +4632,18 @@ class VsWaybarSettings(Gtk.Window):
         self._refresh_preview()
 
     def _on_group_add(self, *_):
-        """Crear un nuevo group/ module."""
-        dlg = Gtk.Dialog(title="Nuevo grupo", parent=self,
+        """Create a new group/ module."""
+        dlg = Gtk.Dialog(title="New group", parent=self,
                          flags=Gtk.DialogFlags.MODAL)
-        dlg.add_buttons("Cancelar", Gtk.ResponseType.CANCEL,
-                        "Crear",    Gtk.ResponseType.OK)
+        dlg.add_buttons("Cancel", Gtk.ResponseType.CANCEL,
+                        "Create", Gtk.ResponseType.OK)
         box = dlg.get_content_area()
         box.set_spacing(10)
         box.set_margin_start(16); box.set_margin_end(16)
         box.set_margin_top(12);   box.set_margin_bottom(12)
-        box.pack_start(_lbl("Nombre del grupo (sin \"group/\"):", "field-label"), False, False, 0)
+        box.pack_start(_lbl('Group name (without "group/"):', "field-label"), False, False, 0)
         entry = Gtk.Entry()
-        entry.set_placeholder_text("p.ej. hardware, power, apps…")
+        entry.set_placeholder_text("e.g. hardware, power, apps…")
         entry.connect("activate", lambda _: dlg.response(Gtk.ResponseType.OK))
         box.pack_start(entry, False, False, 0)
         box.show_all()
@@ -4655,7 +4655,7 @@ class VsWaybarSettings(Gtk.Window):
                 return
             gname = f"group/{name}"
             if gname in self._groups:
-                self._show_alert("Ya existe", f'"{gname}" ya está definido.')
+                self._show_alert("Already exists", f'"{gname}" is already defined.')
                 return
             # create empty group
             self._groups[gname] = {"orientation": "inherit", "modules": []}
@@ -4747,7 +4747,7 @@ class VsWaybarSettings(Gtk.Window):
             dlg.destroy()
 
     def _build_cffi_form(self, cname: str) -> Gtk.Widget:
-        """Formulario para un módulo cffi/name."""
+        """Form for a cffi/name module."""
         ccfg   = self._cffi_modules.setdefault(cname, {})
         suffix = cname[5:]
 
@@ -4803,7 +4803,7 @@ class VsWaybarSettings(Gtk.Window):
         outer.pack_start(_hint(f"{ctx}: custom/{suffix}"), False, False, 4)
 
         # ── Glyph picker ──────────────────────────────────────────────────────
-        outer.pack_start(_lbl("Ícono", "field-label"), False, False, 8)
+        outer.pack_start(_lbl("Icon", "field-label"), False, False, 8)
 
         current_glyph = cfg.get("format", "󰘳")
 
@@ -4813,7 +4813,7 @@ class VsWaybarSettings(Gtk.Window):
         btn_lbl = Gtk.Label()
         btn_lbl.set_markup(
             f"<span font_desc='JetBrainsMono Nerd Font Mono 28'>{current_glyph}</span>"
-            "   Elegir ícono…")
+            "   Pick icon…")
         btn_lbl.show()
         pick_btn.add(btn_lbl)
 
@@ -4823,7 +4823,7 @@ class VsWaybarSettings(Gtk.Window):
                 cfg["format"] = sel
                 btn_lbl.set_markup(
                     f"<span font_desc='JetBrainsMono Nerd Font Mono 28'>{sel}</span>"
-                    "   Elegir ícono…")
+                    "   Pick icon…")
                 store = self._w.get("user_mod_store")
                 if store:
                     for row in store:
@@ -4865,15 +4865,15 @@ class VsWaybarSettings(Gtk.Window):
         color_row.pack_start(hex_entry, False, False, 0)
         outer.pack_start(color_row, False, False, 8)
 
-        # ── Modo: Launcher / Menú ─────────────────────────────────────────────
-        outer.pack_start(_section("Modo"), False, False, 0)
+        # ── Mode: Launcher / Menu ─────────────────────────────────────────────
+        outer.pack_start(_section("Mode"), False, False, 0)
 
         is_menu_mode = cfg.get("_menu_mode", False)
 
         mode_box = Gtk.Box(spacing=0)
         mode_box.get_style_context().add_class("linked")
         btn_launcher = Gtk.ToggleButton(label="  Launcher")
-        btn_menu_m   = Gtk.ToggleButton(label="󰍜  Menú popup")
+        btn_menu_m   = Gtk.ToggleButton(label="󰍜  Popup menu")
         btn_launcher.set_active(not is_menu_mode)
         btn_menu_m.set_active(is_menu_mode)
         mode_box.pack_start(btn_launcher, True, True, 0)
@@ -4887,21 +4887,21 @@ class VsWaybarSettings(Gtk.Window):
         # ── Launcher panel ────────────────────────────────────────────────────
         oc_e = Gtk.Entry()
         oc_e.set_text(cfg.get("on-click", ""))
-        oc_e.set_placeholder_text("firefox, kitty, código…")
+        oc_e.set_placeholder_text("firefox, kitty, code…")
         fields["on-click"] = oc_e
-        launcher_box.pack_start(_lbl("Al hacer click", "field-label"), False, False, 8)
+        launcher_box.pack_start(_lbl("On click", "field-label"), False, False, 8)
         launcher_box.pack_start(oc_e, False, False, 0)
-        launcher_box.pack_start(_hint("Waybar muestra el ícono — el click ejecuta este comando."), False, False, 4)
+        launcher_box.pack_start(_hint("Waybar shows the icon — click runs this command."), False, False, 4)
 
         tt_e = Gtk.Entry()
         tt_e.set_text(cfg.get("tooltip-format", ""))
-        tt_e.set_placeholder_text("Texto opcional al pasar el mouse")
+        tt_e.set_placeholder_text("Optional text on hover")
         fields["tooltip-format"] = tt_e
         launcher_box.pack_start(_lbl("Tooltip", "field-label"), False, False, 8)
         launcher_box.pack_start(tt_e, False, False, 0)
 
-        # ── Menú popup panel ──────────────────────────────────────────────────
-        menu_box.pack_start(_section("Configuración del menú"), False, False, 0)
+        # ── Popup menu panel ──────────────────────────────────────────────────
+        menu_box.pack_start(_section("Menu settings"), False, False, 0)
 
         # Trigger
         trigger_combo = Gtk.ComboBoxText()
@@ -4914,7 +4914,7 @@ class VsWaybarSettings(Gtk.Window):
         trigger_combo.set_active(_triggers.index(cur_trigger)
                                  if cur_trigger in _triggers else 0)
         self._w["_menu_trigger"] = trigger_combo
-        menu_box.pack_start(_row("Activar con", trigger_combo), False, False, 0)
+        menu_box.pack_start(_row("Trigger", trigger_combo), False, False, 0)
 
         # Archivo XML
         default_xml = os.path.expanduser(
@@ -4923,11 +4923,11 @@ class VsWaybarSettings(Gtk.Window):
         xml_entry.set_text(cfg.get("menu-file", default_xml))
         xml_entry.set_placeholder_text(default_xml)
         self._w["_menu_file_entry"] = xml_entry
-        menu_box.pack_start(_row("Archivo XML", xml_entry), False, False, 0)
-        menu_box.pack_start(_hint("El archivo se genera automáticamente al aplicar."), False, False, 2)
+        menu_box.pack_start(_row("XML file", xml_entry), False, False, 0)
+        menu_box.pack_start(_hint("The file is generated automatically on apply."), False, False, 2)
 
-        # ── Lista de ítems (flat) ─────────────────────────────────────────────
-        menu_box.pack_start(_section("Ítems del menú"), False, False, 0)
+        # ── Item list (flat) ──────────────────────────────────────────────────
+        menu_box.pack_start(_section("Menu items"), False, False, 0)
 
         # store: (type, label, id, command)  — type: 'item' | 'separator'
         item_store = Gtk.ListStore(str, str, str, str)
@@ -4966,14 +4966,14 @@ class VsWaybarSettings(Gtk.Window):
 
         cr_label = Gtk.CellRendererText()
         cr_label.set_property("editable", True)
-        col_label = Gtk.TreeViewColumn("Etiqueta", cr_label, text=1)
+        col_label = Gtk.TreeViewColumn("Label", cr_label, text=1)
         col_label.set_expand(True)
         tv.append_column(col_label)
 
         cr_cmd = Gtk.CellRendererText()
         cr_cmd.set_property("editable", True)
         cr_cmd.set_property("ellipsize", Pango.EllipsizeMode.END)
-        col_cmd = Gtk.TreeViewColumn("Comando", cr_cmd, text=3)
+        col_cmd = Gtk.TreeViewColumn("Command", cr_cmd, text=3)
         col_cmd.set_expand(True)
         tv.append_column(col_cmd)
 
@@ -4996,7 +4996,7 @@ class VsWaybarSettings(Gtk.Window):
 
         def _add_item(*_):
             rid = _new_id("item")
-            item_store.append(["item", "Nuevo ítem", rid, ""])
+            item_store.append(["item", "New item", rid, ""])
             it = item_store.get_iter(Gtk.TreePath(len(item_store) - 1))
             tv.get_selection().select_iter(it)
             _refresh_edit_panel(tv.get_selection())
@@ -5024,7 +5024,7 @@ class VsWaybarSettings(Gtk.Window):
                 item_store.swap(it, item_store.get_iter(Gtk.TreePath(idx + 1)))
 
         for label_b, cb in (
-            ("+ Ítem", _add_item),
+            ("+ Item", _add_item),
             ("─ Sep",  _add_sep),
             ("↑",      lambda *_: _move(-1)),
             ("↓",      lambda *_: _move(1)),
@@ -5037,8 +5037,8 @@ class VsWaybarSettings(Gtk.Window):
 
         menu_box.pack_start(ctrl_row, False, False, 2)
 
-        # ── Panel de edición inline ───────────────────────────────────────────
-        menu_box.pack_start(_section("Editar seleccionado"), False, False, 0)
+        # ── Inline edit panel ─────────────────────────────────────────────────
+        menu_box.pack_start(_section("Edit selected"), False, False, 0)
 
         edit_grid = Gtk.Grid()
         edit_grid.set_column_spacing(8)
@@ -5046,11 +5046,11 @@ class VsWaybarSettings(Gtk.Window):
         edit_grid.set_margin_top(4)
 
         e_label = Gtk.Entry(); e_label.set_hexpand(True)
-        e_label.set_placeholder_text("Etiqueta visible")
+        e_label.set_placeholder_text("Visible label")
         e_id    = Gtk.Entry(); e_id.set_hexpand(True)
-        e_id.set_placeholder_text("id único (auto)")
+        e_id.set_placeholder_text("unique id (auto)")
         e_cmd   = Gtk.Entry(); e_cmd.set_hexpand(True)
-        e_cmd.set_placeholder_text("comando a ejecutar")
+        e_cmd.set_placeholder_text("command to run")
 
         _auto_id = [True]
 
@@ -5066,9 +5066,9 @@ class VsWaybarSettings(Gtk.Window):
         e_id.connect("changed",    _id_manual)
 
         for row_n, (lbl_txt, widget) in enumerate((
-            ("Etiqueta", e_label),
-            ("ID",       e_id),
-            ("Comando",  e_cmd),
+            ("Label",   e_label),
+            ("ID",      e_id),
+            ("Command", e_cmd),
         )):
             lbl_w = Gtk.Label(label=lbl_txt)
             lbl_w.set_xalign(1)
@@ -5081,9 +5081,9 @@ class VsWaybarSettings(Gtk.Window):
         self._w["_menu_e_id"]    = e_id
         self._w["_menu_e_cmd"]   = e_cmd
         menu_box.pack_start(edit_grid, False, False, 0)
-        menu_box.pack_start(_hint("El ID se genera automáticamente desde la etiqueta."), False, False, 2)
+        menu_box.pack_start(_hint("The ID is generated automatically from the label."), False, False, 2)
 
-        # ── Conectar selección → panel de edición ─────────────────────────────
+        # ── Connect selection → edit panel ────────────────────────────────────
         _updating_edit = [False]
 
         def _refresh_edit_panel(selection):
@@ -5132,7 +5132,7 @@ class VsWaybarSettings(Gtk.Window):
         cr_label.connect("edited", _cr_label_edited)
         cr_cmd.connect("edited",   _cr_cmd_edited)
 
-        # ── Ensamblar paneles según modo ──────────────────────────────────────
+        # ── Assemble panels by mode ───────────────────────────────────────────
         outer.pack_start(launcher_box, False, False, 0)
         outer.pack_start(menu_box,     False, False, 0)
 
@@ -5140,7 +5140,7 @@ class VsWaybarSettings(Gtk.Window):
             launcher_box.set_visible(not menu)
             menu_box.set_visible(menu)
             cfg["_menu_mode"] = menu
-            # en modo launcher: on-click es válido; en modo menú: se quita
+            # in launcher mode: on-click is valid; in menu mode: removed
             if menu:
                 fields.pop("on-click",       None)
                 fields.pop("tooltip-format", None)
@@ -5229,7 +5229,7 @@ class VsWaybarSettings(Gtk.Window):
     # ── DnD cross-zona ────────────────────────────────────────────────────────
 
     def _on_zone_drag_begin(self, tv, context, store):
-        """Guarda store origen e ID del módulo arrastrado."""
+        """Save source store and dragged module ID."""
         self._dnd_source_store = store
         _, it = tv.get_selection().get_selected()
         self._dnd_source_id = store.get_value(it, 0) if it else None
@@ -5260,7 +5260,7 @@ class VsWaybarSettings(Gtk.Window):
             icon  = glyph
         label = f"{icon}  {name}"
 
-        # Insertar en posición de destino
+        # Insert at drop position
         drop_info = tv.get_dest_row_at_pos(x, y)
         if drop_info:
             path, pos = drop_info
@@ -5273,15 +5273,15 @@ class VsWaybarSettings(Gtk.Window):
         else:
             new_it = store.append([mod_id, label])
 
-        # Eliminar de la store origen (la fila que acabamos de insertar
-        # podría ser la misma store; buscar por posición original, no por valor,
-        # para evitar borrar la recién insertada cuando src is store)
+        # Remove from source store (the row we just inserted
+        # could be the same store; search by original position, not value,
+        # to avoid deleting the newly inserted row when src is store)
         it_s = src.get_iter_first()
         found = False
         while it_s and not found:
             if src.get_value(it_s, 0) == mod_id:
                 if src is store:
-                    # reorden interno: no borrar la fila recién insertada
+                    # internal reorder: do not delete the newly inserted row
                     if src.get_path(it_s) != src.get_path(new_it):
                         src.remove(it_s)
                         found = True
@@ -5401,13 +5401,13 @@ class VsWaybarSettings(Gtk.Window):
             has_drawer = "drawer" in self._groups[gname]
             icon = "󱒊" if has_drawer else "󰾮"
             store.append([gname, f"{icon}  {suffix}", False, False])
-        self._w["group_store"] = store   # ref para añadir/quitar grupos
+        self._w["group_store"] = store   # ref for adding/removing groups
 
         store.append(["", "CFFI Modules", True, False])
         for cname in self._cffi_modules:
             suffix = cname[5:]
             store.append([cname, f"󱋦  {suffix}", False, False])
-        self._w["cffi_store"] = store    # ref para añadir/quitar cffi
+        self._w["cffi_store"] = store    # ref for adding/removing cffi
 
         store.append(["", "User Commands", True, False])
         for suffix in self._cfg.get("_user_modules", []):
@@ -5533,7 +5533,7 @@ class VsWaybarSettings(Gtk.Window):
         self._refresh_preview()
 
     def _build_group_form(self, gname: str) -> Gtk.Widget:
-        """Formulario para un módulo group/name."""
+        """Form for a group/name module."""
         gcfg   = self._groups.setdefault(gname, {})
         suffix = gname[6:]
 
@@ -5542,10 +5542,10 @@ class VsWaybarSettings(Gtk.Window):
         outer.set_margin_top(14);   outer.set_margin_bottom(14)
 
         outer.pack_start(_section(f"group/{suffix}"), False, False, 0)
-        outer.pack_start(_hint(f"Clave Waybar: {gname}"), False, False, 4)
+        outer.pack_start(_hint(f"Waybar key: {gname}"), False, False, 4)
 
-        # ── Orientación ───────────────────────────────────────────────────────
-        outer.pack_start(_section("Orientación"), False, False, 0)
+        # ── Orientation ───────────────────────────────────────────────────────
+        outer.pack_start(_section("Orientation"), False, False, 0)
         orient_combo = Gtk.ComboBoxText()
         for o in ("inherit", "horizontal", "vertical"):
             orient_combo.append_text(o)
@@ -5554,14 +5554,14 @@ class VsWaybarSettings(Gtk.Window):
         orient_combo.set_active(_orients.index(cur_orient)
                                 if cur_orient in _orients else 0)
         self._w["_grp_orient"] = orient_combo
-        outer.pack_start(_row("Orientación", orient_combo), False, False, 0)
+        outer.pack_start(_row("Orientation", orient_combo), False, False, 0)
 
         # ── Drawer ────────────────────────────────────────────────────────────
-        outer.pack_start(_section("Drawer (cajón animado)"), False, False, 0)
-        outer.pack_start(_hint("El primer módulo de la lista actúa como líder — los demás se ocultan hasta el hover."), False, False, 2)
+        outer.pack_start(_section("Drawer (animated tray)"), False, False, 0)
+        outer.pack_start(_hint("The first module acts as leader — the rest hide until hover."), False, False, 2)
 
         has_drawer = "drawer" in gcfg or gcfg.get("_drawer_enabled", False)
-        drawer_sw_row, drawer_sw = _switch_row("Activar drawer", has_drawer)
+        drawer_sw_row, drawer_sw = _switch_row("Enable drawer", has_drawer)
         self._w["_grp_drawer_sw"] = drawer_sw
         outer.pack_start(drawer_sw_row, False, False, 0)
 
@@ -5570,11 +5570,11 @@ class VsWaybarSettings(Gtk.Window):
 
         dur_spin = _spin(drawer_src.get("transition-duration", 500), 0, 2000, 50)
         self._w["_grp_drawer_dur"] = dur_spin
-        drawer_box.pack_start(_row("Duración (ms)", dur_spin), False, False, 0)
+        drawer_box.pack_start(_row("Duration (ms)", dur_spin), False, False, 0)
 
         cls_entry = Gtk.Entry()
         cls_entry.set_text(drawer_src.get("children-class", ""))
-        cls_entry.set_placeholder_text("CSS class para los hijos")
+        cls_entry.set_placeholder_text("CSS class for children")
         self._w["_grp_drawer_cls"] = cls_entry
         drawer_box.pack_start(_row("Children class", cls_entry), False, False, 0)
 
@@ -5587,9 +5587,9 @@ class VsWaybarSettings(Gtk.Window):
         drawer_sw.connect("notify::active",
                           lambda s, _: drawer_box.set_visible(s.get_active()))
 
-        # ── Lista de módulos del grupo ─────────────────────────────────────────
-        outer.pack_start(_section("Módulos del grupo"), False, False, 0)
-        outer.pack_start(_hint("El primer ítem es el líder — siempre visible en drawer mode."), False, False, 2)
+        # ── Group module list ─────────────────────────────────────────────────
+        outer.pack_start(_section("Group modules"), False, False, 0)
+        outer.pack_start(_hint("The first item is the leader — always visible in drawer mode."), False, False, 2)
 
         # store: (key, label)
         mod_store = Gtk.ListStore(str, str)
@@ -5623,8 +5623,8 @@ class VsWaybarSettings(Gtk.Window):
         mod_sw_tv.add(mod_tv)
         outer.pack_start(mod_sw_tv, False, False, 4)
 
-        # ── ComboBox con módulos disponibles ──────────────────────────────────
-        # Construir lista: todos los módulos conocidos + user modules + otros grupos
+        # ── ComboBox with available modules ───────────────────────────────────
+        # Build list: all known modules + user modules + other groups
         _available = []
         for m in sorted(ALL_MODULES):
             _available.append((m, _mod_label(m)))
@@ -5789,7 +5789,7 @@ class VsWaybarSettings(Gtk.Window):
                 try:
                     r1 = re.sub(r'\{:([^}]+)\}', lambda m: now.strftime(m.group(1)), fmt) if fmt.strip() else ""
                 except Exception:
-                    r1 = "(formato inválido)"
+                    r1 = "(invalid format)"
                 try:
                     locale.setlocale(locale.LC_TIME, saved)
                 except Exception:
@@ -6736,7 +6736,7 @@ class VsWaybarSettings(Gtk.Window):
         outer.set_margin_bottom(20)
 
         outer.pack_start(_section("Templates"), False, False, 0)
-        hint = Gtk.Label(label="Preview carga el template en todos los formularios. Apply también marca cambios pendientes.")
+        hint = Gtk.Label(label="Preview loads the template into all forms. Apply also marks pending changes.")
         hint.set_xalign(0)
         hint.set_line_wrap(True)
         hint.get_style_context().add_class("field-label")
@@ -6827,7 +6827,7 @@ class VsWaybarSettings(Gtk.Window):
             btn_row = Gtk.Box(spacing=8)
             btn_row.set_margin_top(4)
 
-            prev_btn = Gtk.Button(label="Vista previa")
+            prev_btn = Gtk.Button(label="Preview")
             _prev_p = Gtk.CssProvider()
             _prev_p.load_from_data((
                 f"button {{ background-color: {c_surf}; background-image: none;"
@@ -6837,7 +6837,7 @@ class VsWaybarSettings(Gtk.Window):
             prev_btn.get_style_context().add_provider(_prev_p, Gtk.STYLE_PROVIDER_PRIORITY_USER)
             prev_btn.connect("clicked", lambda _, _t=tpl, _n=name: self._load_template(_t, _n, apply=False))
 
-            apply_btn = Gtk.Button(label="Aplicar")
+            apply_btn = Gtk.Button(label="Apply")
             _apply_p = Gtk.CssProvider()
             _apply_p.load_from_data((
                 f"button {{ background-color: {c_acc2}; background-image: none;"
@@ -6922,7 +6922,7 @@ class VsWaybarSettings(Gtk.Window):
             GLib.timeout_add(500, self._relaunch_waybar)
             self._status(f"✓  Template «{name}» — reiniciando waybar…")
         else:
-            self._status(f"👁  Vista previa «{name}» — sin cambios guardados.")
+            self._status(f"👁  Preview «{name}» — no changes saved.")
 
     # ── page: About ───────────────────────────────────────────────────────────
 

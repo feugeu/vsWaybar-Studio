@@ -4,6 +4,14 @@ All notable changes to vsWaybar Studio are documented here.
 
 ---
 
+## [1.3.1] — 2026-04-06
+
+### Improvements
+
+- **Full English UI** — all dialogs, labels, hints, placeholders, column headers, status messages and inline code comments that were in Spanish have been translated to English. Affected areas: dock position conflict warning, group/CFFI add dialogs, custom module icon picker, mode toggle ("Popup menu"), launcher/menu form labels and hints, menu items table columns, inline edit panel, group form (orientation, drawer, group modules), Templates tab buttons ("Preview" / "Apply") and the template status message.
+
+---
+
 ## [1.3.0] — 2026-04-04
 
 ### New features

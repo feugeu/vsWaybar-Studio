@@ -1,7 +1,7 @@
 # Maintainer: Victor Sosa <victorsosadev@gmail.com>
 
 pkgname=vswaybar-studio
-pkgver=1.2.0
+pkgver=1.3.1
 pkgrel=1
 pkgdesc="A visual configuration editor for Waybar — build, style and preview your bar in real time"
 arch=('any')
