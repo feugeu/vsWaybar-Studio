@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 """vsWaybar Studio — graphical config editor for Waybar"""
 
-__version__ = "1.4.0"
+__version__ = "1.4.1"
 
 import gi
+import os as _os
+# Data directory: /usr/share/vswaybar-studio when installed from AUR/package,
+# otherwise the directory containing this script (local / dev run).
+_DATA_DIR = (
+    "/usr/share/vswaybar-studio"
+    if _os.path.isdir("/usr/share/vswaybar-studio")
+    else _os.path.dirname(_os.path.abspath(__file__))
+)
 gi.require_version('Gtk', '3.0')
 gi.require_version('PangoCairo', '1.0')
 try:
@@ -6442,7 +6450,7 @@ class VsWaybarSettings(Gtk.Window):
             box.pack_start(_hint(_status_txt), False, False, 0)
 
             def _install_vsbar(*_):
-                app_dir = os.path.dirname(os.path.abspath(__file__))
+                app_dir = _DATA_DIR
                 src = os.path.join(app_dir, "vsbar.py")
                 dst = os.path.expanduser("~/.config/waybar/scripts/vsbar.py")
                 try:
@@ -6821,7 +6829,7 @@ class VsWaybarSettings(Gtk.Window):
                 return f.read()
         except FileNotFoundError:
             if default_src:
-                app_dir  = os.path.dirname(os.path.abspath(__file__))
+                app_dir = _DATA_DIR
                 src_path = os.path.join(app_dir, default_src)
                 try:
                     with open(src_path) as f:
@@ -6890,7 +6898,7 @@ class VsWaybarSettings(Gtk.Window):
         if not default_src:
             self._status("No bundled default for this script.")
             return
-        app_dir  = os.path.dirname(os.path.abspath(__file__))
+        app_dir = _DATA_DIR
         src_path = os.path.join(app_dir, default_src)
         try:
             with open(src_path) as f:

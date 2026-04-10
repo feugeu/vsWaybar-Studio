@@ -4,6 +4,14 @@ All notable changes to vsWaybar Studio are documented here.
 
 ---
 
+## [1.4.1] — 2026-04-09
+
+### Bug fixes
+
+- **Bundled scripts not found when installed from AUR** — when installed via the AUR package, the executable lives in `/usr/bin/` but bundled scripts (`vsbar.py`, `weather.py`, etc.) are in `/usr/share/vswaybar-studio/`. The app was using `os.path.dirname(__file__)` which resolved to `/usr/bin/` and failed to find any script. Fixed by introducing `_DATA_DIR` at startup: resolves to `/usr/share/vswaybar-studio` if that directory exists (AUR install), otherwise falls back to the script's own directory (local/dev run). Affected: Scripts tab display, vsbar.py install button, weather script install button.
+
+---
+
 ## [1.4.0] — 2026-04-09
 
 ### New features
