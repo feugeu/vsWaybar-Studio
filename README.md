@@ -71,13 +71,29 @@ What vsWaybar Studio does handle gracefully: it reads your existing config on st
 - Python 3.10+
 - `python-gobject` (GTK3 bindings)
 - `python-cairo`
+- `webkit2gtk-4.1` — bar live preview
 - [Waybar](https://github.com/Alexays/Waybar)
-- [Hyprland](https://github.com/hyprwm/Hyprland) (for `hyprland/workspaces` and `hyprland/window` modules)
 
 Optional:
-- [matugen](https://github.com/InioX/matugen) — palette generation from wallpaper
-- [swaync](https://github.com/ErikReider/SwayNotificationCenter) — notification center module
-- [wlogout](https://github.com/ArtsyMacaw/wlogout) — power menu module
+- [matugen](https://github.com/InioX/matugen) — palette generation from wallpaper image (Styling tab)
+
+---
+
+## Module dependencies
+
+These are **not** installed by vsWaybar Studio — install them only if you use the corresponding module.
+
+| Module | Package needed | Install |
+|---|---|---|
+| `custom/bar-cpu` `custom/bar-mem` `custom/bar-vol` `custom/bar-wifi` | `vsbar.py` (bundled) | Modules tab → **Install script** button |
+| `custom/claudebar` | `claudebar` (AUR) | `yay -S claudebar` |
+| `custom/weather` | `weather.py` (bundled) + OpenWeatherMap API key | Scripts tab → save script; free key at openweathermap.org |
+| `custom/updates` | `pacman-contrib` | `sudo pacman -S pacman-contrib` |
+| `custom/swaync` | `swaync` | `yay -S swaync` |
+| `custom/power` | `wlogout` | `yay -S wlogout` |
+| `pulseaudio` on-click | `pavucontrol` | `sudo pacman -S pavucontrol` |
+| `network` / `custom/bar-wifi` on-click | `nm-connection-editor` | `sudo pacman -S network-manager-applet` |
+| `hyprland/workspaces` `hyprland/window` | Hyprland compositor | [hyprland.org](https://hyprland.org) |
 
 ---
 

@@ -113,7 +113,7 @@ DEFAULTS = {
     "modules-left":   ["custom/arch", "hyprland/workspaces", "hyprland/window"],
     "modules-center": ["custom/weather", "clock"],
     "modules-right":  ["tray", "custom/updates", "pulseaudio", "network",
-                       "memory", "cpu", "battery", "custom/swaync", "custom/power", "custom/settings"],
+                       "memory", "cpu", "battery", "custom/swaync", "custom/settings", "custom/power"],
     "custom/arch": {
         "format":          "<span font='JetBrainsMono Nerd Font Mono 20' color='#ffffff'>󰣇</span>",
         "on-click":        "$HOME/.local/bin/vsfetch",
@@ -1623,7 +1623,7 @@ _DEFAULT_LAYOUT = {
     "modules-left":   ["custom/arch", "hyprland/workspaces", "hyprland/window"],
     "modules-center": ["custom/weather", "clock"],
     "modules-right":  ["tray", "custom/updates", "pulseaudio", "network",
-                       "memory", "cpu", "custom/swaync", "custom/power", "custom/settings"],
+                       "memory", "cpu", "custom/swaync", "custom/settings", "custom/power"],
 }
 
 _MATUGEN_MAP = {
